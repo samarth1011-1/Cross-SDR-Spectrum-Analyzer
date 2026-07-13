@@ -15,6 +15,7 @@ class DSPEngine:
 
     def process(self, frame, display_span: float | None = None) -> SpectrumData:
         samples = np.asarray(frame.samples, dtype=np.complex64)
+        samples = samples - np.mean(samples)                                                                            # DC blocker
         if samples.size != self.fft_size:
             raise ValueError(
                 f"Expected {self.fft_size} IQ samples, received {samples.size}"
@@ -22,7 +23,10 @@ class DSPEngine:
 
         fft = np.fft.fftshift(np.fft.fft(samples * self.window))
         # With normalized CF32 samples this is dBFS, not calibrated dBm.
-        amplitude = 20.0 * np.log10(np.maximum(np.abs(fft) / self.coherent_gain, 1e-12))
+        FLOOR_LINEAR = 10.0 ** (-140.0 / 20.0)
+        amplitude = 20.0 * np.log10(
+            np.maximum(np.abs(fft) / self.coherent_gain, FLOOR_LINEAR)
+        )
         frequency = frame.center_frequency + np.fft.fftshift(
             np.fft.fftfreq(self.fft_size, d=1.0 / frame.sample_rate)
         )

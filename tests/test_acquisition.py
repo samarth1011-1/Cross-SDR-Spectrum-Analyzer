@@ -6,6 +6,7 @@ import numpy as np
 
 from backend.acquisition import SyntheticAcquisition, SoapyAcquisition, create_acquisition
 from backend.models import AcquisitionConfig
+from backend.sdr import SDR
 
 
 class FakeRange:
@@ -92,6 +93,33 @@ class AcquisitionTests(unittest.TestCase):
         self.assertEqual(frames[0].device_name, "Fake HackRF")
         self.assertTrue(statuses[0].startswith("Connected:"))
         self.assertEqual(statuses[-1], "Idle")
+
+    def test_sdr_configure_receive_sets_rx_parameters(self):
+        fake_soapy = types.SimpleNamespace(
+            Device=FakeDevice,
+            SOAPY_SDR_RX=1,
+            SOAPY_SDR_CF32="CF32",
+        )
+        with patch("backend.sdr._load_soapy", return_value=fake_soapy), patch(
+            "backend.sdr.enumerate_devices",
+            return_value=[
+                {
+                    "driver": "hackrf",
+                    "label": "Fake HackRF",
+                    "serial": "123",
+                    "hardware": "FakeHardware",
+                }
+            ],
+        ):
+            info = SDR().configure_receive("HACKRF", 100e6, 2e6, 20, channel=0)
+
+        self.assertTrue(info.connected)
+        self.assertEqual(info.device_name, "Fake HackRF")
+        self.assertEqual(info.driver, "hackrf")
+        self.assertEqual(info.serial_number, "123")
+        self.assertEqual(info.details["configured_center_frequency"], "100000000.0")
+        self.assertEqual(info.details["configured_sample_rate"], "2000000.0")
+        self.assertEqual(float(info.details["configured_gain"]), 20.0)
 
     def test_realtime_simulator_uses_normal_pipeline(self):
         config = AcquisitionConfig("SIMULATOR", 2.44e9, 20e6, 20e6, 20, fft_size=4096)
