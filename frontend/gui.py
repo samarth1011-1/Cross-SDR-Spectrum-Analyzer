@@ -276,7 +276,7 @@ class MainWindow(QMainWindow):
 
         # Device & Streaming
         self.sdr_type_combo = QComboBox()
-        self.sdr_type_combo.addItems(["SIMULATOR", "HackRF", "USRP", "PLUTO"])
+        self.sdr_type_combo.addItems(["SIMULATOR", "HackRF"])
         
         self.btn_run_stop = QPushButton("Run (Live Streaming)")
         self.btn_run_stop.setCheckable(True)
@@ -339,7 +339,7 @@ class MainWindow(QMainWindow):
         lyt_rx = QFormLayout(grp_rx)
         self.sample_rate_combo = QComboBox()
         self.sample_rate_combo.addItems(["2", "5", "8", "10", "12.5", "16", "20"])
-        self.sample_rate_combo.setCurrentText("20")
+        self.sample_rate_combo.setCurrentText("10")
         
         self.gain_spin = QSpinBox()
         self.gain_spin.setRange(0, 62)
@@ -461,7 +461,7 @@ class MainWindow(QMainWindow):
         self.span_ctrl.value_changed_hz.connect(self._configuration_changed)
         self.sample_rate_combo.currentTextChanged.connect(self._configuration_changed)
         self.gain_spin.valueChanged.connect(self._configuration_changed)
-        self.sdr_type_combo.currentTextChanged.connect(self._configuration_changed)
+        self.sdr_type_combo.currentTextChanged.connect(self._device_type_changed)   # was _configuration_changed
 
     def _update_trace_modes(self):
         cw = self.btn_clear_write.isChecked()
@@ -579,6 +579,13 @@ class MainWindow(QMainWindow):
             self.lbl_device_status.setText("Device: Reconfiguring...")
             self.backend.start(self._acquisition_config())
 
+    def _device_type_changed(self, *_):
+        if self._is_running:
+            self._stop_acquisition()
+        self.lbl_device_status.setText(
+            f"Device: {self.sdr_type_combo.currentText()} selected - press Run"
+        )
+        
     def _toggle_run(self):
         if self._is_running:
             self._stop_acquisition()
@@ -606,6 +613,8 @@ class MainWindow(QMainWindow):
             self.lbl_device_status.setText(f"Device: {status}")
 
     def _on_backend_error(self, message: str):
+        print(f"[ACQ ERROR] {message}", flush=True)
+        self.backend.stop()                      # kill any pending restart
         self.status_bar.showMessage(message, 15000)
         self.lbl_device_status.setText(f"Device error: {message}")
         self._is_running = False
