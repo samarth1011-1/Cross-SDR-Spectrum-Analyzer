@@ -4,6 +4,8 @@ import numpy as np
 
 from .models import SpectrumData
 
+SPECTRUM_FLOOR_DBFS = -140.0
+
 
 class DSPEngine:
     def __init__(self, fft_size: int = 4096):
@@ -23,9 +25,9 @@ class DSPEngine:
 
         fft = np.fft.fftshift(np.fft.fft(samples * self.window))
         # With normalized CF32 samples this is dBFS, not calibrated dBm.
-        FLOOR_LINEAR = 10.0 ** (-140.0 / 20.0)
+        floor_linear = 10.0 ** (SPECTRUM_FLOOR_DBFS / 20.0)
         amplitude = 20.0 * np.log10(
-            np.maximum(np.abs(fft) / self.coherent_gain, FLOOR_LINEAR)
+            np.maximum(np.abs(fft) / self.coherent_gain, floor_linear)
         )
         frequency = frame.center_frequency + np.fft.fftshift(
             np.fft.fftfreq(self.fft_size, d=1.0 / frame.sample_rate)

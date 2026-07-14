@@ -81,21 +81,35 @@ class SDR:
                 f"No {device_type} was found by SoapySDR. Run 'SoapySDRUtil --find' to diagnose."
             )
 
-        device = soapy.Device(f"driver={device_type.lower()}")
+        device_type = device_type.upper()
+        driver = "hackrf" if device_type == "HACKRF" else "uhd"
+        selector = f"driver={driver}"
+        if device_type == "USRP" and matches[0].get("serial"):
+            selector += f",serial={matches[0]['serial']}"
+        device = soapy.Device(selector)
         direction = soapy.SOAPY_SDR_RX
         stream = None
         try:
             device.setSampleRate(direction, channel, sample_rate)
             device.setFrequency(direction, channel, center_frequency)
 
-            # Never use the aggregate setGain(dir, chan, value): the SoapySDR base
-            # class distributes it across AMP/LNA/VGA in registry order, silently
-            # switching on the 14 dB front-end amp -- damaging with a signal
-            # generator on the input.
-            requested_gain = 2.0 * round(min(62.0, max(0.0, gain)) / 2.0)  # VGA: 0..62, 2 dB steps
-            device.setGain(direction, channel, "AMP", 0.0)                 # front-end amp OFF
-            device.setGain(direction, channel, "LNA", 24.0)                # 0..40, 8 dB steps
-            device.setGain(direction, channel, "VGA", requested_gain)
+            if device_type == "HACKRF":
+                # HackRF must use explicit stages so aggregate gain never enables AMP.
+                requested_gain = 2.0 * round(min(62.0, max(0.0, gain)) / 2.0)
+                device.setGain(direction, channel, "AMP", 0.0)
+                device.setGain(direction, channel, "LNA", 24.0)
+                device.setGain(direction, channel, "VGA", requested_gain)
+            else:
+                requested_gain = float(gain)
+                try:
+                    gain_range = device.getGainRange(direction, channel)
+                    requested_gain = max(
+                        float(gain_range.minimum()),
+                        min(float(gain_range.maximum()), requested_gain),
+                    )
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
+                device.setGain(direction, channel, requested_gain)
 
             actual_rate = float(device.getSampleRate(direction, channel))
             actual_frequency = float(device.getFrequency(direction, channel))
@@ -144,6 +158,6 @@ class SDR:
             device_name=label,
             driver=matches[0].get("driver", "Unknown"),
             serial_number=matches[0].get("serial", "Unknown"),
-            hardware_key=matches[0].get("hardware", "Unknown"),
+            hardware_key=matches[0].get("type", matches[0].get("hardware", "Unknown")),
             details=details,
         )

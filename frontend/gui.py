@@ -35,6 +35,7 @@ from frontend.waterfall import WaterfallWidget
 from frontend.recorder import Recorder
 from frontend.freq_control import FrequencyControl
 from frontend.marker_dropdown import MarkerSelectorButton
+from frontend.carrier_window import CarrierActivityWindow
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +90,12 @@ class BackendBridge(QObject):
             acquisition = self._acquisition
         if acquisition is not None:
             acquisition.stop()
+
+    def reset_min_hold(self):
+        with self._lock:
+            acquisition = self._acquisition
+        if acquisition is not None and hasattr(acquisition, "reset_min_hold"):
+            acquisition.reset_min_hold()
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +185,7 @@ class MainWindow(QMainWindow):
         self._is_running = False
         self._last_frame = None
         self._last_frame_time = None
+        self._min_hold_was_enabled = False
 
         # Base Layout Initialization
         self.setDockOptions(QMainWindow.DockOption.AllowNestedDocks | QMainWindow.DockOption.AnimatedDocks)
@@ -188,6 +196,7 @@ class MainWindow(QMainWindow):
         self._build_left_dock()
         self._build_right_dock()
         self._build_delta_readout()
+        self.carrier_window = CarrierActivityWindow(self)
         self._build_statusbar()
         
         # Wiring and configuration
@@ -276,7 +285,7 @@ class MainWindow(QMainWindow):
 
         # Device & Streaming
         self.sdr_type_combo = QComboBox()
-        self.sdr_type_combo.addItems(["SIMULATOR", "HackRF"])
+        self.sdr_type_combo.addItems(["SIMULATOR", "HackRF", "USRP"])
         
         self.btn_run_stop = QPushButton("Run (Live Streaming)")
         self.btn_run_stop.setCheckable(True)
@@ -311,7 +320,13 @@ class MainWindow(QMainWindow):
         # Utilities
         self.btn_screenshot = QPushButton("Screenshot")
         self.btn_export_csv = QPushButton("Export CSV")
-        self._toolbar.addWidget(self._create_toolbar_group("UTILITIES", [self.btn_screenshot, self.btn_export_csv]))
+        self.btn_carrier_activity = QPushButton("Carrier Activity")
+
+        self._toolbar.addWidget(self._create_toolbar_group("UTILITIES", [
+            self.btn_carrier_activity,
+            self.btn_screenshot,
+            self.btn_export_csv
+        ]))
 
     # -----------------------------------------------------------------------
     # Left Dock Panel
@@ -345,6 +360,12 @@ class MainWindow(QMainWindow):
         self.gain_spin.setRange(0, 62)
         self.gain_spin.setValue(20)
         
+        self.reference_level_spin = QDoubleSpinBox()
+        self.reference_level_spin.setRange(-150, 50)
+        self.reference_level_spin.setValue(0)
+        self.reference_level_spin.setSuffix(" dBFS")
+
+        lyt_rx.addRow("Reference:", self.reference_level_spin)
         lyt_rx.addRow("SR (Msps):", self.sample_rate_combo)
         lyt_rx.addRow("Gain (dB):", self.gain_spin)
         layout.addWidget(grp_rx)
@@ -448,6 +469,7 @@ class MainWindow(QMainWindow):
         
         self.btn_screenshot.clicked.connect(lambda: self.recorder.take_screenshot())
         self.btn_export_csv.clicked.connect(lambda: self.recorder.export_csv(self._last_frame))
+        self.btn_carrier_activity.clicked.connect(self._show_carrier_activity)
 
         # Marker actions
         self.spectrum_widget.markers_changed.connect(self._on_markers_changed)
@@ -462,7 +484,9 @@ class MainWindow(QMainWindow):
         self.sample_rate_combo.currentTextChanged.connect(self._configuration_changed)
         self.gain_spin.valueChanged.connect(self._configuration_changed)
         self.sdr_type_combo.currentTextChanged.connect(self._device_type_changed)   # was _configuration_changed
-
+        self.reference_level_spin.valueChanged.connect(
+         self._reference_level_changed
+        )
     def _update_trace_modes(self):
         cw = self.btn_clear_write.isChecked()
         mh = self.btn_max_hold.isChecked()
@@ -473,6 +497,10 @@ class MainWindow(QMainWindow):
         self.spectrum_widget.set_trace_mode(max_hold=mh)
         self.spectrum_widget.set_trace_mode(min_hold=mi)
         self.spectrum_widget.set_trace_mode(average=av)
+
+        if mi and not self._min_hold_was_enabled:
+            self.backend.reset_min_hold()
+        self._min_hold_was_enabled = mi
 
         status_text = (f"Clear Write: {'ON' if cw else 'OFF'}\n"
                        f"Max Hold: {'ON' if mh else 'OFF'}\n"
@@ -626,6 +654,7 @@ class MainWindow(QMainWindow):
         self._last_frame = frame
         self.spectrum_widget.update_frame(frame)
         self.waterfall_widget.update_frame(frame)
+        self.carrier_window.update_frame(frame)
 
         peak = frame.peaks[0] if frame.peaks else None
         if peak is not None:
@@ -648,6 +677,11 @@ class MainWindow(QMainWindow):
         if self._last_frame_time is not None and now > self._last_frame_time:
             self.lbl_fps.setText(f"FPS: {1.0/(now-self._last_frame_time):.1f}")
         self._last_frame_time = now
+
+    def _show_carrier_activity(self):
+        self.carrier_window.show()
+        self.carrier_window.raise_()
+        self.carrier_window.activateWindow()
 
     # -----------------------------------------------------------------------
     # Marker & Delta Logic
@@ -782,6 +816,12 @@ class MainWindow(QMainWindow):
         finally:
             self.table_markers.blockSignals(False)
 
+    def _reference_level_changed(self):
+        self.spectrum_widget.set_reference_level(
+            self.reference_level_spin.value(),
+            120
+        )
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         # Keep delta window floating properly
@@ -790,6 +830,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self.backend.stop()
+        self.carrier_window.close()
         super().closeEvent(event)
 
 
