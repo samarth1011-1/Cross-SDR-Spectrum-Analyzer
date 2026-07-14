@@ -321,8 +321,11 @@ class MainWindow(QMainWindow):
         self.btn_screenshot = QPushButton("Screenshot")
         self.btn_export_csv = QPushButton("Export CSV")
         self.btn_carrier_activity = QPushButton("Carrier Activity")
+
         self._toolbar.addWidget(self._create_toolbar_group("UTILITIES", [
-            self.btn_carrier_activity, self.btn_screenshot, self.btn_export_csv
+            self.btn_carrier_activity,
+            self.btn_screenshot,
+            self.btn_export_csv
         ]))
 
     # -----------------------------------------------------------------------
@@ -357,6 +360,12 @@ class MainWindow(QMainWindow):
         self.gain_spin.setRange(0, 62)
         self.gain_spin.setValue(20)
         
+        self.reference_level_spin = QDoubleSpinBox()
+        self.reference_level_spin.setRange(-150, 50)
+        self.reference_level_spin.setValue(0)
+        self.reference_level_spin.setSuffix(" dBFS")
+
+        lyt_rx.addRow("Reference:", self.reference_level_spin)
         lyt_rx.addRow("SR (Msps):", self.sample_rate_combo)
         lyt_rx.addRow("Gain (dB):", self.gain_spin)
         layout.addWidget(grp_rx)
@@ -475,7 +484,9 @@ class MainWindow(QMainWindow):
         self.sample_rate_combo.currentTextChanged.connect(self._configuration_changed)
         self.gain_spin.valueChanged.connect(self._configuration_changed)
         self.sdr_type_combo.currentTextChanged.connect(self._device_type_changed)   # was _configuration_changed
-
+        self.reference_level_spin.valueChanged.connect(
+         self._reference_level_changed
+        )
     def _update_trace_modes(self):
         cw = self.btn_clear_write.isChecked()
         mh = self.btn_max_hold.isChecked()
@@ -804,6 +815,12 @@ class MainWindow(QMainWindow):
                 self.table_markers.setItem(row, 3, delta_item)
         finally:
             self.table_markers.blockSignals(False)
+
+    def _reference_level_changed(self):
+        self.spectrum_widget.set_reference_level(
+            self.reference_level_spin.value(),
+            120
+        )
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

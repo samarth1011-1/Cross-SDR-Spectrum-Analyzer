@@ -465,3 +465,5 @@ class SpectrumWidget(QWidget):
 
     def set_reference_level(self, ref_dbm: float, span_db: float = 120):
         self.plot_widget.setYRange(ref_dbm - span_db, ref_dbm)
+    
+   
