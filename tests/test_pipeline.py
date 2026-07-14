@@ -42,6 +42,23 @@ class AnalyzerPipelineTests(unittest.TestCase):
             quiet.average[index], (loud.amplitude[index] + quiet.amplitude[index]) / 2, places=4
         )
 
+    def test_min_hold_ignores_dsp_numerical_floor(self):
+        first = self.pipeline.process(self.tone(0.5))
+        floor_frame = self.pipeline.process(
+            np.zeros(self.config.fft_size, dtype=np.complex64)
+        )
+        self.assertTrue(np.all(floor_frame.amplitude == -140.0))
+        self.assertTrue(np.all(floor_frame.min_hold > -139.0))
+        self.assertTrue(np.all(np.isfinite(floor_frame.min_hold)))
+
+    def test_min_hold_can_be_reset_independently(self):
+        self.pipeline.process(self.tone(0.1))
+        self.pipeline.traces.reset_min_hold()
+        restarted = self.pipeline.process(self.tone(0.5))
+        valid = restarted.amplitude > -139.0
+        self.assertTrue(np.allclose(restarted.min_hold[valid], restarted.amplitude[valid]))
+        self.assertTrue(np.all(restarted.min_hold > -139.0))
+
     def test_display_span_is_cropped_and_metrics_are_finite(self):
         frame = self.pipeline.process(self.tone(0.5))
         self.assertLessEqual(frame.frequency[-1] - frame.frequency[0], self.config.span)

@@ -3,6 +3,7 @@
 import time
 
 from .dsp import DSPEngine
+from .carrier import CarrierDetector
 from .measurements import MeasurementEngine
 from .models import IQFrame, SpectrumFrame
 from .peak import PeakEngine
@@ -17,6 +18,7 @@ class AnalyzerPipeline:
         self.traces = TraceEngine()
         self.measurements = MeasurementEngine()
         self.peaks = PeakEngine()
+        self.carrier_detector = CarrierDetector()
         self.frame_count = 0
 
     def process(self, samples) -> SpectrumFrame:
@@ -30,6 +32,7 @@ class AnalyzerPipeline:
         traces = self.traces.update(spectrum)
         measurements = self.measurements.update(traces)
         peaks = self.peaks.find(traces)
+        carrier = self.carrier_detector.update(traces.frequency, traces.live)    # comment this if not needed
         self.frame_count += 1
         return SpectrumFrame(
             frequency=traces.frequency,
@@ -50,6 +53,7 @@ class AnalyzerPipeline:
             rbw=spectrum.rbw,
             frame_count=traces.frame_count,
             device_name=self.device_name,
+            carrier=carrier,                                        # carrier = none 
         )
 
     def clear_traces(self):

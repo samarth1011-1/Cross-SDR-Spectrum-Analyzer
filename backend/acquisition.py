@@ -1,7 +1,7 @@
-"""Continuous HackRF One RX acquisition through SoapySDR.
+"""Continuous receive-only SDR acquisition through SoapySDR.
 
-Scope is deliberately narrow: SIMULATOR + HackRF One, receive only.
-USRP and ADALM-Pluto support has been removed.
+HackRF One and Ettus USRP use separate bring-up paths so device-specific
+configuration cannot leak from one driver into the other.
 """
 
 from __future__ import annotations
@@ -13,10 +13,12 @@ from collections.abc import Callable
 import numpy as np
 
 from .controller import AnalyzerPipeline
+from .calibration import load_device_calibration
 from .models import AcquisitionConfig, DeviceInfo
 
 
 HACKRF_DRIVER = "hackrf"
+USRP_DRIVER = "uhd"
 
 # HackRF One hardware limits.
 HACKRF_MIN_FREQ = 1e6
@@ -34,6 +36,10 @@ HACKRF_VGA_MAX = 62.0       # 0..62 dB, 2 dB steps
 # enumerate()/make() concurrently will race hackrf_device_list_open() and both
 # fail. Serialize the entire bring-up sequence process-wide.
 _OPEN_LOCK = threading.Lock()
+
+# Keep UHD discovery/make calls serialized without changing the proven HackRF
+# locking path. The two drivers can therefore be stopped and opened independently.
+_USRP_OPEN_LOCK = threading.Lock()
 
 # Set True while bringing up hardware. Makes SoapyHackRF print
 #   [INFO]  Opening HackRF One #0 ...
@@ -53,9 +59,11 @@ def create_acquisition(config: AcquisitionConfig):
         return SyntheticAcquisition(config)
     if device_type == "HACKRF":
         return HackRFAcquisition(config)
+    if device_type == "USRP":
+        return USRPAcquisition(config)
     raise AcquisitionError(
         f"Unsupported device type '{config.device_type}'. This build supports "
-        "SIMULATOR and HACKRF only."
+        "SIMULATOR, HACKRF, and USRP only."
     )
 
 
@@ -69,9 +77,13 @@ class SyntheticAcquisition:
         self.config = config
         self.frame_rate = frame_rate
         self._stop_event = threading.Event()
+        self._reset_min_hold_event = threading.Event()
 
     def stop(self):
         self._stop_event.set()
+
+    def reset_min_hold(self):
+        self._reset_min_hold_event.set()
 
     def run(
         self,
@@ -91,6 +103,9 @@ class SyntheticAcquisition:
 
         try:
             while not self._stop_event.is_set():
+                if self._reset_min_hold_event.is_set():
+                    pipeline.traces.reset_min_hold()
+                    self._reset_min_hold_event.clear()
                 elapsed = time.monotonic() - started
                 indices = sample_index + np.arange(self.config.fft_size, dtype=np.float64)
                 amplitude_1 = 0.30 + 0.16 * np.sin(2.0 * np.pi * elapsed / 3.0)
@@ -144,11 +159,25 @@ def enumerate_hackrf() -> list[dict[str, str]]:
     return devices
 
 
+def enumerate_usrp() -> list[dict[str, str]]:
+    """Discover only Ettus devices exposed by the SoapyUHD driver."""
+    soapy = _load_soapy()
+    devices = []
+    for entry in soapy.Device.enumerate(dict(driver=USRP_DRIVER)):
+        item = {str(k): str(entry[k]) for k in entry.keys()}
+        if item.get("driver", "").lower() == USRP_DRIVER:
+            devices.append(item)
+    return devices
+
+
 # Back-compat shim for backend/main.py and the tests.
 def enumerate_devices(device_type: str = "HACKRF") -> list[dict[str, str]]:
-    if device_type.upper() != "HACKRF":
-        raise AcquisitionError(f"Unsupported SDR type: {device_type}")
-    return enumerate_hackrf()
+    device_type = device_type.upper()
+    if device_type == "HACKRF":
+        return enumerate_hackrf()
+    if device_type == "USRP":
+        return enumerate_usrp()
+    raise AcquisitionError(f"Unsupported SDR type: {device_type}")
 
 
 # ---------------------------------------------------------------------------
@@ -161,9 +190,13 @@ class HackRFAcquisition:
         self._soapy = None
         self._device = None
         self._stream = None
+        self._reset_min_hold_event = threading.Event()
 
     def stop(self):
         self._stop_event.set()
+
+    def reset_min_hold(self):
+        self._reset_min_hold_event.set()
 
     # -- configuration -----------------------------------------------------
     @staticmethod
@@ -241,7 +274,15 @@ class HackRFAcquisition:
             applied_gain = self._apply_gains(direction, channel, float(self.config.gain))
 
             actual_rate = float(self._device.getSampleRate(direction, channel))
-            actual_freq = float(self._device.getFrequency(direction, channel))
+            # SoapyHackRF getFrequency() returns its cached tune request, not a
+            # hardware PLL measurement. Apply the measured display-axis correction
+            # separately so the setpoint and calibration are never confused.
+            driver_freq = float(self._device.getFrequency(direction, channel))
+            calibration = load_device_calibration(
+                "HACKRF", matches[0].get("serial", "")
+            )
+            axis_offset = float(calibration.get("frequency_axis_offset_hz") or 0.0)
+            calibrated_freq = driver_freq + axis_offset
             if abs(actual_rate - self.config.sample_rate) / self.config.sample_rate > 0.01:
                 raise AcquisitionError(
                     f"HackRF selected {actual_rate/1e6:.3f} Msps instead of the requested "
@@ -250,7 +291,7 @@ class HackRFAcquisition:
 
             self.config = AcquisitionConfig(
                 device_type="HACKRF",
-                center_frequency=actual_freq,
+                center_frequency=calibrated_freq,
                 sample_rate=actual_rate,
                 span=min(self.config.span, actual_rate),
                 gain=applied_gain,
@@ -288,7 +329,12 @@ class HackRFAcquisition:
             driver=HACKRF_DRIVER,
             serial_number=matches[0].get("serial", "Unknown"),
             hardware_key=matches[0].get("device", "HackRF One"),
-            details=matches[0],
+            details={
+                **matches[0],
+                "driver_frequency_hz": str(driver_freq),
+                "frequency_axis_offset_hz": str(axis_offset),
+                "display_center_frequency_hz": str(calibrated_freq),
+            },
         )
 
     # -- streaming ---------------------------------------------------------
@@ -324,9 +370,12 @@ class HackRFAcquisition:
                     last_sample = time.monotonic()
                     filled += result.ret
                     if filled == self.config.fft_size:
-                        frame = pipeline.process(block.copy())
                         now = time.monotonic()
                         if now - last_emit >= 1.0 / 30.0:
+                            if self._reset_min_hold_event.is_set():
+                                pipeline.traces.reset_min_hold()
+                                self._reset_min_hold_event.clear()
+                            frame = pipeline.process(block.copy())
                             frame_callback(frame)
                             last_emit = now
                         filled = 0
@@ -387,6 +436,208 @@ class HackRFAcquisition:
             except Exception:
                 pass
 
+        self._stream = None
+        self._device = None
+        self._soapy = None
+
+
+# ---------------------------------------------------------------------------
+# Ettus USRP through SoapyUHD, receive only
+# ---------------------------------------------------------------------------
+class USRPAcquisition:
+    """Configure and continuously stream one USRP without touching HackRF state."""
+
+    def __init__(self, config: AcquisitionConfig):
+        self.config = config
+        self._stop_event = threading.Event()
+        self._reset_min_hold_event = threading.Event()
+        self._soapy = None
+        self._device = None
+        self._stream = None
+
+    def stop(self):
+        self._stop_event.set()
+
+    def reset_min_hold(self):
+        self._reset_min_hold_event.set()
+
+    @staticmethod
+    def _selector(match: dict[str, str]) -> str:
+        """Build a stable selector for the single device found during discovery."""
+        parts = [f"driver={USRP_DRIVER}"]
+        for key in ("serial", "addr"):
+            value = match.get(key)
+            if value:
+                parts.append(f"{key}={value}")
+                break
+        return ",".join(parts)
+
+    def _apply_gain(self, direction, channel, requested_gain: float) -> float:
+        gain = float(requested_gain)
+        try:
+            gain_range = self._device.getGainRange(direction, channel)
+            gain = max(float(gain_range.minimum()), min(float(gain_range.maximum()), gain))
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+
+        try:
+            if self._device.hasGainMode(direction, channel):
+                self._device.setGainMode(direction, channel, False)
+        except (AttributeError, RuntimeError):
+            pass
+
+        self._device.setGain(direction, channel, gain)
+        return gain
+
+    def _open(self):
+        with _USRP_OPEN_LOCK:
+            return self._open_locked()
+
+    def _open_locked(self):
+        soapy = _load_soapy()
+        self._soapy = soapy
+
+        matches = enumerate_usrp()
+        if not matches:
+            raise AcquisitionError(
+                "No Ettus USRP found by SoapyUHD. Check power/network or USB, then "
+                "run 'uhd_find_devices' and 'SoapySDRUtil --find=\"driver=uhd\"'."
+            )
+        if len(matches) > 1:
+            raise AcquisitionError(
+                f"{len(matches)} USRPs found. Connect exactly one before starting this build."
+            )
+
+        match = matches[0]
+        self._device = soapy.Device(self._selector(match))
+        direction = soapy.SOAPY_SDR_RX
+        channel = int(self.config.channel)
+
+        try:
+            self._device.setSampleRate(direction, channel, self.config.sample_rate)
+            self._device.setFrequency(direction, channel, self.config.center_frequency)
+            try:
+                self._device.setBandwidth(
+                    direction, channel, min(self.config.span, self.config.sample_rate)
+                )
+            except (AttributeError, RuntimeError):
+                pass
+
+            applied_gain = self._apply_gain(direction, channel, self.config.gain)
+            actual_rate = float(self._device.getSampleRate(direction, channel))
+            actual_freq = float(self._device.getFrequency(direction, channel))
+            if actual_rate <= 0 or (
+                abs(actual_rate - self.config.sample_rate) / self.config.sample_rate > 0.01
+            ):
+                raise AcquisitionError(
+                    f"USRP selected {actual_rate/1e6:.3f} Msps instead of the requested "
+                    f"{self.config.sample_rate/1e6:.3f} Msps. Choose a supported rate."
+                )
+
+            self.config = AcquisitionConfig(
+                device_type="USRP",
+                center_frequency=actual_freq,
+                sample_rate=actual_rate,
+                span=min(self.config.span, actual_rate),
+                gain=applied_gain,
+                fft_size=self.config.fft_size,
+                channel=channel,
+            )
+            self._stream = self._device.setupStream(
+                direction, soapy.SOAPY_SDR_CF32, [channel]
+            )
+            rc = self._device.activateStream(self._stream)
+            if rc not in (None, 0):
+                detail = soapy.errToStr(rc) if hasattr(soapy, "errToStr") else str(rc)
+                raise AcquisitionError(f"USRP activateStream failed ({rc}: {detail}).")
+        except Exception as exc:
+            self._close()
+            if isinstance(exc, AcquisitionError):
+                raise
+            raise AcquisitionError(f"Could not configure the Ettus USRP: {exc}") from exc
+
+        return soapy, DeviceInfo(
+            connected=True,
+            device_name=match.get("label", match.get("name", "Ettus USRP")),
+            driver=USRP_DRIVER,
+            serial_number=match.get("serial", "Unknown"),
+            hardware_key=match.get("type", match.get("hardware", "USRP")),
+            details=match,
+        )
+
+    def run(
+        self,
+        frame_callback: Callable[[object], None],
+        status_callback: Callable[[str], None] | None = None,
+    ):
+        soapy = None
+        try:
+            soapy, info = self._open()
+            if status_callback:
+                status_callback(f"Connected: {info.device_name}")
+            pipeline = AnalyzerPipeline(self.config, info.device_name)
+            block = np.empty(self.config.fft_size, dtype=np.complex64)
+            filled = 0
+            last_emit = 0.0
+            last_sample = time.monotonic()
+            timeout_code = getattr(soapy, "SOAPY_SDR_TIMEOUT", -1)
+            overflow_code = getattr(soapy, "SOAPY_SDR_OVERFLOW", -4)
+
+            while not self._stop_event.is_set():
+                result = self._device.readStream(
+                    self._stream,
+                    [block[filled:]],
+                    self.config.fft_size - filled,
+                    timeoutUs=200_000,
+                )
+                if result.ret > 0:
+                    last_sample = time.monotonic()
+                    filled += result.ret
+                    if filled == self.config.fft_size:
+                        now = time.monotonic()
+                        if now - last_emit >= 1.0 / 30.0:
+                            if self._reset_min_hold_event.is_set():
+                                pipeline.traces.reset_min_hold()
+                                self._reset_min_hold_event.clear()
+                            frame_callback(pipeline.process(block.copy()))
+                            last_emit = now
+                        filled = 0
+                elif result.ret == 0 or result.ret in (timeout_code, overflow_code):
+                    if time.monotonic() - last_sample > 5.0:
+                        raise AcquisitionError(
+                            "USRP is configured but has delivered no IQ samples for 5 s. "
+                            "Check its connection and RX channel with 'uhd_usrp_probe'."
+                        )
+                else:
+                    detail = (
+                        soapy.errToStr(result.ret)
+                        if hasattr(soapy, "errToStr")
+                        else str(result.ret)
+                    )
+                    raise AcquisitionError(f"USRP stream read failed: {detail}")
+        finally:
+            self._close()
+            if status_callback:
+                status_callback("Idle")
+
+    def _close(self):
+        device, stream, soapy = self._device, self._stream, self._soapy
+        if device is not None and stream is not None:
+            try:
+                device.deactivateStream(stream)
+            except Exception:
+                pass
+            try:
+                device.closeStream(stream)
+            except Exception:
+                pass
+        if device is not None:
+            try:
+                if soapy is None:
+                    soapy = _load_soapy()
+                soapy.Device.unmake(device)
+            except Exception:
+                pass
         self._stream = None
         self._device = None
         self._soapy = None

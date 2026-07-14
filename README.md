@@ -4,13 +4,15 @@ A desktop spectrum analyzer for receiving and displaying live RF signals with:
 
 - HackRF One
 - Ettus USRP devices supported by UHD
-- ADALM-Pluto (PlutoSDR)
 - A built-in IQ simulator for testing without hardware
 
 The application continuously receives complex IQ samples from the selected
 source, calculates an FFT, and displays a live spectrum and waterfall. Existing
 analysis features include clear/write, max hold, min hold, averaging, peak
 measurements, markers, delta markers, occupied bandwidth, and CSV export.
+Six normal/delta markers are available. Stateful carrier detection highlights
+the active carrier on the spectrum and records rising/falling burst edges in a
+dedicated Carrier Activity window.
 
 > **Current amplitude unit:** dBFS. Absolute dBm requires RF calibration for the
 > specific SDR, frequency, gain, sample rate, and signal path. See
@@ -25,6 +27,7 @@ measurements, markers, delta markers, occupied bandwidth, and CSV export.
 - [Using the interface](#using-the-interface)
 - [Measurements](#measurements)
 - [Amplitude: dBFS and dBm](#amplitude-dbfs-and-dbm)
+- [Calibration guide](calibration.md)
 - [Project structure](#project-structure)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
@@ -37,7 +40,7 @@ Simulator mode generates IQ samples; it does not generate a ready-made graph.
 
 ```mermaid
 flowchart LR
-    A["HackRF / USRP / Pluto / Simulator"] --> B["Complex IQ samples"]
+    A["HackRF / USRP / Simulator"] --> B["Complex IQ samples"]
     B --> C["4096-point Hann-windowed FFT"]
     C --> D["Frequency bins and dBFS levels"]
     D --> E["Live, max hold, min hold, average"]
@@ -111,12 +114,11 @@ Then:
 | SoapySDR with Python bindings | Common streaming and discovery interface |
 | `soapysdr-module-hackrf` and `hackrf` | HackRF One |
 | `soapysdr-module-uhd` and `uhd` | Ettus USRP |
-| `soapysdr-module-plutosdr` and `libiio` | ADALM-Pluto |
 
 The recommended environment is Radioconda. From a Radioconda Prompt:
 
 ```powershell
-mamba install -c conda-forge -c ryanvolz numpy pyqt6 pyqtgraph soapysdr soapysdr-module-hackrf soapysdr-module-uhd soapysdr-module-plutosdr hackrf uhd libiio
+mamba install -c conda-forge -c ryanvolz numpy pyqt6 pyqtgraph soapysdr soapysdr-module-hackrf soapysdr-module-uhd hackrf uhd
 ```
 
 Alternatively, create the supplied environment:
@@ -182,19 +184,10 @@ Windows USB driver. Network USRPs must be reachable on the configured network
 interface and permitted by the local firewall.
 
 Select **USRP** in the application and use a sample rate supported by that
-device. The analyzer uses receive channel 0.
-
-### ADALM-Pluto
-
-Before running the GUI:
-
-```powershell
-iio_info -s
-SoapySDRUtil --find="driver=plutosdr"
-```
-
-Select **PLUTO** and press **Run**. The Pluto USB/libiio driver must already be
-installed. A network-connected Pluto must be reachable by libiio.
+device, then press **Run**. The analyzer discovers and opens the USRP only for
+that selection and uses receive channel 0. To return to HackRF, select
+**HackRF** and press **Run** again; the previous stream is fully closed before
+the selected device is opened.
 
 ## Using the interface
 
@@ -202,7 +195,7 @@ installed. A network-connected Pluto must be reachable by libiio.
 
 | Control | Meaning |
 |---|---|
-| Device | Select Simulator, HackRF, USRP, or Pluto |
+| Device | Select Simulator, HackRF, or USRP |
 | Run / Stop | Open or close the continuous receive stream |
 | Center | RF center frequency in Hz, kHz, MHz, or GHz |
 | Span | Width of spectrum displayed around the center |
@@ -223,15 +216,18 @@ error rather than silently continuing.
 |---|---|---|
 | Clear Write | Cyan | Most recent FFT frame |
 | Max Hold | Red | Highest value reached by every frequency bin |
-| Min Hold | Blue | Lowest value reached by every frequency bin |
+| Min Hold | Blue | Lowest valid displayed-sweep value reached by every frequency bin since Min Hold was enabled |
 | Average | Yellow | Running average of every frequency bin |
 
-The trace history starts when acquisition starts and resets after the stream is
-reconfigured or restarted. Multiple traces can be displayed at the same time.
+Max-hold and average history start with acquisition. Min hold starts fresh when
+it is enabled. Trace history resets after the stream is reconfigured or
+restarted. Numerical FFT-floor values are excluded from min hold so a single
+underflow bin cannot pin the trace to -140 dBFS. Multiple traces can be displayed
+at the same time.
 
 ### Markers
 
-- Select marker M1, M2, or M3 and click the spectrum to place it.
+- Select marker M1 through M6 and click the spectrum to place it.
 - Edit a marker's **Freq** cell in the marker table to move it precisely. A plain
   number is interpreted as MHz; explicit `Hz`, `kHz`, `MHz`, and `GHz` suffixes
   are accepted. The marker snaps to the nearest displayed FFT bin.
@@ -243,6 +239,14 @@ reconfigured or restarted. Multiple traces can be displayed at the same time.
 - **Clear All** removes all normal and delta markers.
 - Peak detection is still used for measurements and Peak Search, but automatic
   colored peak triangles are intentionally not displayed.
+
+### Carrier activity
+
+The detector uses peak level above the median noise floor, two-frame
+confirmation, and hysteresis to avoid rapid on/off chatter. An active carrier's
+band is shaded on the main spectrum. Rising and falling states are labeled on
+that overlay. Open **Carrier Activity** for a time plot where green and red
+symbols mark temporal rising and falling burst edges.
 
 ### Waterfall
 
@@ -345,11 +349,15 @@ freqanalyzer/
 |-- run.py                    Application entry point
 |-- README.md                 Project overview and usage
 |-- INSTALL.md                Detailed drivers and offline installation
+|-- calibration.md            Frequency and dBFS-to-dBm calibration procedure
+|-- calibration.json          Device and serial-specific calibration values
 |-- environment.yml           Complete Conda environment
 |-- requirements.txt          Python-only requirements
 |-- backend/
 |   |-- acquisition.py        SoapySDR streaming and IQ simulator
 |   |-- controller.py         IQ-to-SpectrumFrame processing pipeline
+|   |-- carrier.py            Carrier state and burst-edge detector
+|   |-- calibration.py        Calibration file loader
 |   |-- dsp.py                Window, FFT, frequency axis, and dBFS
 |   |-- trace.py              Live, max/min hold, and average traces
 |   |-- peak.py               Peak detection
@@ -364,7 +372,8 @@ freqanalyzer/
 |   |-- renderer.py           Spectrum traces and marker behavior
 |   |-- waterfall.py          Waterfall history display
 |   |-- freq_control.py       Frequency/unit input widget
-|   |-- marker_dropdown.py    M1/M2/M3 selector
+|   |-- marker_dropdown.py    M1 through M6 selector
+|   |-- carrier_window.py     Carrier activity history and edge window
 |   `-- recorder.py           Screenshot and CSV export
 `-- tests/
     |-- test_pipeline.py       DSP, tone, span, hold, and average tests
@@ -388,6 +397,7 @@ The tests verify:
 - max hold, min hold, and average accumulation
 - display-span cropping and finite measurements
 - mocked SoapySDR stream delivery and shutdown
+- isolated HackRF/USRP selection and mocked USRP receive configuration
 - real-time simulator delivery through the normal analyzer pipeline
 
 Run a syntax check with:
@@ -404,7 +414,7 @@ actual SDR and a safely attenuated known signal source.
 
 ### The GUI opens but shows the simulator
 
-Simulator is the default device. Select **HackRF**, **USRP**, or **PLUTO**, then
+Simulator is the default device. Select **HackRF** or **USRP**, then
 press **Run**.
 
 ### SoapySDR cannot be imported
@@ -436,16 +446,6 @@ SoapySDRUtil --find="driver=uhd"
 ```
 
 Check UHD images, USB drivers, or the network interface/subnet as appropriate.
-
-### No Pluto is detected
-
-```powershell
-iio_info -s
-SoapySDRUtil --find="driver=plutosdr"
-```
-
-Check the Analog Devices USB driver, libiio installation, cable, or network
-connection.
 
 ### A large spike appears at the center
 
@@ -487,4 +487,3 @@ connected to the RF/antenna input—not a clock, trigger, or output connector.
 - Channel power integrates the full displayed span.
 - This is an SDR-based analyzer, not a replacement for a calibrated laboratory
   spectrum analyzer or power meter.
-

@@ -73,6 +73,18 @@ class MeasurementData:
 
 
 @dataclass
+class CarrierDetection:
+    detected: bool
+    event: str
+    peak_frequency: float
+    peak_level: float
+    noise_floor: float
+    margin_db: float
+    lower_frequency: float
+    upper_frequency: float
+
+
+@dataclass
 class SpectrumFrame:
     """Flat frame contract consumed directly by the frontend."""
 
@@ -94,6 +106,7 @@ class SpectrumFrame:
     rbw: float
     frame_count: int
     device_name: str = ""
+    carrier: CarrierDetection | None = None
 
 
 # Legacy file-capture models are retained for old recordings and scripts.

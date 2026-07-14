@@ -1,7 +1,7 @@
 # Installation and hardware setup
 
-The analyzer uses SoapySDR as a common streaming layer for HackRF One,
-Ettus USRP, and ADALM-Pluto. Start it from a **Radioconda Prompt** so the
+The analyzer uses SoapySDR as a common streaming layer for HackRF One and
+Ettus USRP. Start it from a **Radioconda Prompt** so the
 SoapySDR DLLs and device modules are already on `PATH`.
 
 ## Required libraries
@@ -15,7 +15,6 @@ SoapySDR DLLs and device modules are already on `PATH`.
 | SoapySDR (including Python bindings) | Common device discovery and RX streaming API |
 | soapysdr-module-hackrf + hackrf | HackRF One driver and diagnostic tools |
 | soapysdr-module-uhd + uhd | Ettus USRP driver, utilities, firmware, and FPGA support |
-| soapysdr-module-plutosdr + libiio | ADALM-Pluto USB/network driver |
 
 The program itself does not require GNU Radio, SciPy, pandas, matplotlib,
 or vendor-specific Python APIs such as `uhd` or `pyadi-iio`.
@@ -26,7 +25,7 @@ Radioconda already includes the SDR packages above. Install the GUI packages
 and make sure all required packages are present:
 
 ```powershell
-mamba install -c conda-forge -c ryanvolz numpy pyqt6 pyqtgraph soapysdr soapysdr-module-hackrf soapysdr-module-uhd soapysdr-module-plutosdr hackrf uhd libiio
+mamba install -c conda-forge -c ryanvolz numpy pyqt6 pyqtgraph soapysdr soapysdr-module-hackrf soapysdr-module-uhd hackrf uhd
 ```
 
 Alternatively, create an isolated environment from the supplied file:
@@ -65,14 +64,7 @@ SoapySDR device modules and vendor libraries.
    Network USRPs must be on a reachable interface/subnet and allowed by the local
    firewall. UHD selects the correct transport from device discovery.
 
-3. ADALM-Pluto: install the Analog Devices Pluto USB driver/libiio support, then verify:
-
-   ```powershell
-   iio_info -s
-   SoapySDRUtil --find="driver=plutosdr"
-   ```
-
-Finally verify that all three modules load:
+Finally verify that both modules load:
 
 ```powershell
 SoapySDRUtil --info
@@ -117,7 +109,7 @@ display-ready spectrum arrays, so it is suitable for end-to-end GUI testing.
 ## RF safety and amplitude units
 
 Use attenuation between a signal generator and the SDR. Never assume a common
-safe input level across HackRF, USRP daughterboards, and Pluto; check the manual
+safe input level across HackRF and USRP daughterboards; check the manual
 for the exact hardware and start at a low generator level.
 
 Displayed amplitude is **dBFS**, because raw SDR samples are not factory-calibrated

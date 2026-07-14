@@ -21,11 +21,14 @@ COLOR_AVERAGE     = "#FFD60A"
 COLOR_AXIS_TEXT   = "#CCCCCC"
 TRACE_WIDTH = 1.6
 
-# One color per marker slot (1, 2, 3). Delta marker reuses same color as parent.
+# One color per marker slot. Delta marker reuses the parent marker's color.
 MARKER_COLORS = {
     1: "#FFFFFF",   # white
     2: "#00FF7F",   # spring green
     3: "#FF7F00",   # orange
+    4: "#FF4FD8",   # magenta
+    5: "#7FDBFF",   # light blue
+    6: "#B8FF3D",   # lime
 }
 
 DELTA_SYMBOL = "\u0394"   # Δ
@@ -41,6 +44,8 @@ class SpectrumWidget(QWidget):
             "delta": {"frequency": float, "amplitude": float} | None},
         2: {...},
         3: {...},
+        ...
+        6: {...},
     }
     Only marker IDs that have been placed are present in the dict.
     """
@@ -50,6 +55,7 @@ class SpectrumWidget(QWidget):
         super().__init__(parent)
         self._build_plot()
         self._init_traces()
+        self._init_carrier_overlay()
         self._init_markers()
 
         self.show_clear_write = True
@@ -96,6 +102,20 @@ class SpectrumWidget(QWidget):
         self.curve_min_hold.setVisible(False)
         self.curve_average.setVisible(False)
 
+    def _init_carrier_overlay(self):
+        self.carrier_region = pg.LinearRegionItem(
+            values=(0, 0),
+            movable=False,
+            brush=pg.mkBrush(0, 255, 102, 35),
+            pen=pg.mkPen(0, 255, 102, 130),
+        )
+        self.carrier_region.setZValue(-5)
+        self.plot_widget.addItem(self.carrier_region)
+        self.carrier_region.hide()
+        self.carrier_edge_label = pg.TextItem(anchor=(0.5, 1.0))
+        self.plot_widget.addItem(self.carrier_edge_label)
+        self.carrier_edge_label.hide()
+
     # ------------------------------------------------------------------
     # Marker system
     # ------------------------------------------------------------------
@@ -104,16 +124,16 @@ class SpectrumWidget(QWidget):
         self._last_amplitude = None
         self._active_marker_id = 1       # which marker next click places
 
-        # {marker_id: TargetItem}  — placed markers M1/M2/M3
+        # {marker_id: TargetItem} - placed markers M1 through M6
         self._markers: dict = {}
-        # {marker_id: TargetItem}  — delta markers M1Δ/M2Δ/M3Δ, one per parent
+        # {marker_id: TargetItem} - one delta marker per parent
         self._delta_markers: dict = {}
 
         self.plot_widget.scene().sigMouseClicked.connect(self._on_plot_clicked)
 
     # --- Active marker selection (called from gui.py dropdown) ---
     def set_active_marker(self, marker_id: int):
-        assert marker_id in (1, 2, 3)
+        assert marker_id in range(1, 7)
         self._active_marker_id = marker_id
 
     def set_marker_frequency(self, marker_id: int, frequency: float) -> bool:
@@ -370,6 +390,35 @@ class SpectrumWidget(QWidget):
         amp  = frame.amplitude
         self._last_frequency = freq
         self._last_amplitude = amp
+
+        carrier = getattr(frame, "carrier", None)
+        if carrier is not None and carrier.detected:
+            lower = carrier.lower_frequency
+            upper = carrier.upper_frequency
+            if lower == upper:
+                lower -= frame.rbw / 2.0
+                upper += frame.rbw / 2.0
+            self.carrier_region.setRegion(
+                (lower, upper)
+            )
+            self.carrier_region.show()
+        else:
+            self.carrier_region.hide()
+
+        if carrier is not None and (carrier.detected or carrier.event):
+            if carrier.event == "rising":
+                text, color = "↑ RISING", "#00FF66"
+            elif carrier.event == "falling":
+                text, color = "↓ FALLING", "#FF4444"
+            else:
+                text, color = "CARRIER", "#00FF66"
+            self.carrier_edge_label.setText(text, color=color)
+            self.carrier_edge_label.setPos(
+                carrier.peak_frequency, min(-1.0, carrier.peak_level + 8.0)
+            )
+            self.carrier_edge_label.show()
+        else:
+            self.carrier_edge_label.hide()
 
         # Normal markers stay attached to their selected frequency bin as the
         # live trace changes. This makes marker amplitude a live measurement.

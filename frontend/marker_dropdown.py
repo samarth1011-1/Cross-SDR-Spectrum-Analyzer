@@ -20,7 +20,7 @@ from PyQt6.QtGui import QKeyEvent
 class _DropdownPanel(QFrame):
     """The popup panel. Frameless window that stays on screen until dismissed."""
 
-    option_selected = pyqtSignal(int)   # emits 1 / 2 / 3
+    option_selected = pyqtSignal(int)   # emits marker IDs 1 through 6
     closed = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -55,7 +55,10 @@ class _DropdownPanel(QFrame):
         layout.setSpacing(0)
 
         self._buttons = {}
-        for i, label in enumerate(["Marker 1", "Marker 2", "Marker 3"], start=1):
+        for i, label in enumerate(
+            ["Marker 1", "Marker 2", "Marker 3", "Marker 4", "Marker 5", "Marker 6"],
+            start=1,
+        ):
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.clicked.connect(lambda _, mid=i: self._on_option(mid))
@@ -92,7 +95,7 @@ class MarkerSelectorButton(QPushButton):
     """
     Drop-in replacement for the marker QComboBox.
     Shows persistent popup — hover-out does NOT close it.
-    Signals: marker_selected(int) emits 1, 2, or 3.
+    Signals: marker_selected(int) emits a marker ID from 1 through 6.
     """
 
     marker_selected = pyqtSignal(int)
@@ -117,7 +120,7 @@ class MarkerSelectorButton(QPushButton):
         # Position the panel directly below this button
         btn_bottom_left = self.mapToGlobal(QPoint(0, self.height()))
         self._panel.move(btn_bottom_left)
-        self._panel.resize(160, 33 * 3)
+        self._panel.resize(160, 33 * 6)
         self._panel.show()
         self._panel_open = True
 
