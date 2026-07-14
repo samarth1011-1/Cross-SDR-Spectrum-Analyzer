@@ -26,6 +26,11 @@ HACKRF_MAX_FREQ = 6e9
 HACKRF_MIN_RATE = 2e6
 HACKRF_MAX_RATE = 20e6
 
+# X300-series motherboard ceiling. A 160 MHz usable span requires a compatible
+# wide-band daughterboard and a 10 GigE or PCIe host connection.
+USRP_X3X0_MAX_RATE = 200e6
+USRP_X3X0_MAX_SPAN = 160e6
+
 # Front-end amp. Keep OFF for signal-generator work: +14 dB into a HackRF that is
 # already fed a strong CW tone will compress the ADC and can damage the LNA.
 HACKRF_AMP_DB = 0.0
@@ -448,12 +453,28 @@ class USRPAcquisition:
     """Configure and continuously stream one USRP without touching HackRF state."""
 
     def __init__(self, config: AcquisitionConfig):
-        self.config = config
+        self.config = self._validate(config)
         self._stop_event = threading.Event()
         self._reset_min_hold_event = threading.Event()
         self._soapy = None
         self._device = None
         self._stream = None
+
+    @staticmethod
+    def _validate(config: AcquisitionConfig) -> AcquisitionConfig:
+        if config.sample_rate <= 0 or config.sample_rate > USRP_X3X0_MAX_RATE:
+            raise AcquisitionError(
+                f"USRP sample rate must be above 0 and no more than "
+                f"{USRP_X3X0_MAX_RATE/1e6:.0f} MS/s for the X300-series profile."
+            )
+        if config.span <= 0 or config.span > USRP_X3X0_MAX_SPAN:
+            raise AcquisitionError(
+                f"USRP span must be above 0 and no more than "
+                f"{USRP_X3X0_MAX_SPAN/1e6:.0f} MHz for the X300-series profile."
+            )
+        if config.span > config.sample_rate:
+            raise AcquisitionError("USRP span cannot exceed its sample rate.")
+        return config
 
     def stop(self):
         self._stop_event.set()

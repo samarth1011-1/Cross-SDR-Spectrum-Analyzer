@@ -7,7 +7,7 @@ Owner: Developer B (Frontend/GUI)
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 
 # ----------------------------------------------------------------------------
@@ -15,11 +15,19 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout
 # ----------------------------------------------------------------------------
 COLOR_BACKGROUND  = "#000000"
 COLOR_CLEAR_WRITE = "#00F0FF"
-COLOR_MAX_HOLD    = "#FF3B30"
+COLOR_MAX_HOLD    = "#B45CFF"
 COLOR_MIN_HOLD    = "#3399FF"
 COLOR_AVERAGE     = "#FFD60A"
 COLOR_AXIS_TEXT   = "#CCCCCC"
+COLOR_AUTO_PEAK   = "#FF3B30"
 TRACE_WIDTH = 1.6
+
+MARKER_TRACE_FIELDS = {
+    "cw": "amplitude",
+    "max_hold": "max_hold",
+    "min_hold": "min_hold",
+    "average": "average",
+}
 
 # One color per marker slot. Delta marker reuses the parent marker's color.
 MARKER_COLORS = {
@@ -41,6 +49,7 @@ class SpectrumWidget(QWidget):
     Payload structure:
     {
         1: {"frequency": float, "amplitude": float,
+            "trace": "cw" | "max_hold" | "min_hold" | "average",
             "delta": {"frequency": float, "amplitude": float} | None},
         2: {...},
         3: {...},
@@ -55,7 +64,7 @@ class SpectrumWidget(QWidget):
         super().__init__(parent)
         self._build_plot()
         self._init_traces()
-        self._init_carrier_overlay()
+        self._init_auto_peak_marker()
         self._init_markers()
 
         self.show_clear_write = True
@@ -102,19 +111,32 @@ class SpectrumWidget(QWidget):
         self.curve_min_hold.setVisible(False)
         self.curve_average.setVisible(False)
 
-    def _init_carrier_overlay(self):
-        self.carrier_region = pg.LinearRegionItem(
-            values=(0, 0),
-            movable=False,
-            brush=pg.mkBrush(0, 255, 102, 35),
-            pen=pg.mkPen(0, 255, 102, 130),
+    def _init_auto_peak_marker(self):
+        """Create the red, non-interactive indicator for the live global peak."""
+        self.auto_peak_marker = pg.ScatterPlotItem(
+            symbol="t1",
+            size=9,
+            pen=pg.mkPen(COLOR_AUTO_PEAK, width=1.5),
+            brush=pg.mkBrush(COLOR_AUTO_PEAK),
         )
-        self.carrier_region.setZValue(-5)
-        self.plot_widget.addItem(self.carrier_region)
-        self.carrier_region.hide()
-        self.carrier_edge_label = pg.TextItem(anchor=(0.5, 1.0))
-        self.plot_widget.addItem(self.carrier_edge_label)
-        self.carrier_edge_label.hide()
+        self.auto_peak_marker.setZValue(100)
+        self.auto_peak_marker.hide()
+        self.plot_widget.addItem(self.auto_peak_marker)
+        self._auto_peak_available = False
+        self._auto_peak_visible = True
+        self._auto_peak_blink_timer = QTimer(self)
+        self._auto_peak_blink_timer.setInterval(700)
+        self._auto_peak_blink_timer.timeout.connect(
+            self._toggle_auto_peak_visibility
+        )
+        self._auto_peak_blink_timer.start()
+
+    def _toggle_auto_peak_visibility(self):
+        if not self._auto_peak_available:
+            self.auto_peak_marker.hide()
+            return
+        self._auto_peak_visible = not self._auto_peak_visible
+        self.auto_peak_marker.setVisible(self._auto_peak_visible)
 
     # ------------------------------------------------------------------
     # Marker system
@@ -122,7 +144,9 @@ class SpectrumWidget(QWidget):
     def _init_markers(self):
         self._last_frequency = None
         self._last_amplitude = None
-        self._active_marker_id = 1       # which marker next click places
+        self._trace_amplitudes = {name: None for name in MARKER_TRACE_FIELDS}
+        self._marker_trace = "cw"
+        self._active_marker_id = None    # None disables click-to-place
 
         # {marker_id: TargetItem} - placed markers M1 through M6
         self._markers: dict = {}
@@ -133,8 +157,47 @@ class SpectrumWidget(QWidget):
 
     # --- Active marker selection (called from gui.py dropdown) ---
     def set_active_marker(self, marker_id: int):
-        assert marker_id in range(1, 7)
-        self._active_marker_id = marker_id
+        if marker_id not in range(0, 7):
+            raise ValueError("Marker ID must be None (0) or one of 1 through 6")
+        self._active_marker_id = marker_id or None
+
+    def set_marker_trace(self, trace_name: str):
+        """Attach all normal and delta markers to exactly one selected trace."""
+        if trace_name not in MARKER_TRACE_FIELDS:
+            raise ValueError(f"Unknown marker trace: {trace_name}")
+        self._marker_trace = trace_name
+        self._last_amplitude = self._trace_amplitudes[trace_name]
+        if self._last_frequency is None or self._last_amplitude is None:
+            return
+
+        for mid, target in self._markers.items():
+            index = int(np.argmin(np.abs(self._last_frequency - target.pos().x())))
+            target.blockSignals(True)
+            target.setPos(
+                float(self._last_frequency[index]),
+                float(self._last_amplitude[index]),
+            )
+            target.blockSignals(False)
+            self._refresh_marker_label(mid)
+
+            delta_target = self._delta_markers.get(mid)
+            if delta_target is not None:
+                delta_index = int(
+                    np.argmin(np.abs(self._last_frequency - delta_target.pos().x()))
+                )
+                delta_target.blockSignals(True)
+                delta_target.setPos(
+                    float(self._last_frequency[delta_index]),
+                    float(self._last_amplitude[delta_index]),
+                )
+                delta_target.blockSignals(False)
+                self._refresh_delta_label(mid)
+        if self._markers:
+            self._emit_state()
+
+    @property
+    def marker_trace(self) -> str:
+        return self._marker_trace
 
     def set_marker_frequency(self, marker_id: int, frequency: float) -> bool:
         """Move a normal marker to the nearest displayed FFT bin."""
@@ -164,7 +227,7 @@ class SpectrumWidget(QWidget):
         return float(self._last_frequency[index])
 
     def place_active_marker_at_frequency(self, frequency: float):
-        if self._last_frequency is None:
+        if self._active_marker_id is None or self._last_frequency is None:
             return
         index = int(np.argmin(np.abs(self._last_frequency - frequency)))
         self._place_marker(
@@ -174,7 +237,7 @@ class SpectrumWidget(QWidget):
         )
 
     def place_active_marker_at_peak(self):
-        if self._last_amplitude is None:
+        if self._active_marker_id is None or self._last_amplitude is None:
             return
         index = int(np.argmax(self._last_amplitude))
         self._place_marker(
@@ -185,7 +248,7 @@ class SpectrumWidget(QWidget):
 
     # --- Place / update a normal marker on click ---
     def _on_plot_clicked(self, event):
-        if self._last_frequency is None:
+        if self._active_marker_id is None or self._last_frequency is None:
             return
         vb = self.plot_widget.getPlotItem().getViewBox()
         scene_pos = event.scenePos()
@@ -257,7 +320,7 @@ class SpectrumWidget(QWidget):
         Spawns a delta marker for marker `mid`.
         Delta marker = same color as parent, named 'M{mid}Δ'.
         Placed slightly to the right of the parent marker initially.
-        Dragging it snaps to the live waveform and shows Δf/ΔA vs the parent.
+        Dragging it snaps to the selected trace and shows Δf/ΔA vs the parent.
         """
         if mid not in self._markers:
             return   # parent not placed yet — silently ignore
@@ -299,7 +362,7 @@ class SpectrumWidget(QWidget):
             self._emit_state()
 
     def _on_delta_dragged(self, mid: int, target):
-        """Snap the delta marker to the nearest live-waveform sample."""
+        """Snap the delta marker to the nearest selected-trace sample."""
         if self._last_frequency is None:
             return
         position = target.pos()
@@ -361,6 +424,7 @@ class SpectrumWidget(QWidget):
             state[mid] = {
                 "frequency": pos.x(),
                 "amplitude": pos.y(),
+                "trace": self._marker_trace,
                 "delta": delta_info,
             }
         self.markers_changed.emit(state)
@@ -389,43 +453,31 @@ class SpectrumWidget(QWidget):
         freq = frame.frequency
         amp  = frame.amplitude
         self._last_frequency = freq
-        self._last_amplitude = amp
+        self._trace_amplitudes = {
+            name: getattr(frame, field)
+            for name, field in MARKER_TRACE_FIELDS.items()
+        }
+        self._last_amplitude = self._trace_amplitudes[self._marker_trace]
 
-        carrier = getattr(frame, "carrier", None)
-        if carrier is not None and carrier.detected:
-            lower = carrier.lower_frequency
-            upper = carrier.upper_frequency
-            if lower == upper:
-                lower -= frame.rbw / 2.0
-                upper += frame.rbw / 2.0
-            self.carrier_region.setRegion(
-                (lower, upper)
+        finite = np.flatnonzero(np.isfinite(amp))
+        if finite.size:
+            peak_index = int(finite[np.argmax(amp[finite])])
+            self.auto_peak_marker.setData(
+                [float(freq[peak_index])], [float(amp[peak_index])]
             )
-            self.carrier_region.show()
+            if not self._auto_peak_available:
+                self._auto_peak_visible = True
+            self._auto_peak_available = True
+            self.auto_peak_marker.setVisible(self._auto_peak_visible)
         else:
-            self.carrier_region.hide()
+            self._auto_peak_available = False
+            self.auto_peak_marker.hide()
 
-        if carrier is not None and (carrier.detected or carrier.event):
-            if carrier.event == "rising":
-                text, color = "↑ RISING", "#00FF66"
-            elif carrier.event == "falling":
-                text, color = "↓ FALLING", "#FF4444"
-            else:
-                text, color = "CARRIER", "#00FF66"
-            self.carrier_edge_label.setText(text, color=color)
-            self.carrier_edge_label.setPos(
-                carrier.peak_frequency, min(-1.0, carrier.peak_level + 8.0)
-            )
-            self.carrier_edge_label.show()
-        else:
-            self.carrier_edge_label.hide()
-
-        # Normal markers stay attached to their selected frequency bin as the
-        # live trace changes. This makes marker amplitude a live measurement.
+        # All markers stay attached to the one trace selected in Trace Marker.
         for mid, target in self._markers.items():
             index = int(np.argmin(np.abs(freq - target.pos().x())))
             target.blockSignals(True)
-            target.setPos(float(freq[index]), float(amp[index]))
+            target.setPos(float(freq[index]), float(self._last_amplitude[index]))
             target.blockSignals(False)
             self._refresh_marker_label(mid)
             if mid in self._delta_markers:
@@ -434,7 +486,7 @@ class SpectrumWidget(QWidget):
                 delta_target.blockSignals(True)
                 delta_target.setPos(
                     float(freq[delta_index]),
-                    float(amp[delta_index]),
+                    float(self._last_amplitude[delta_index]),
                 )
                 delta_target.blockSignals(False)
                 self._refresh_delta_label(mid)
@@ -465,5 +517,3 @@ class SpectrumWidget(QWidget):
 
     def set_reference_level(self, ref_dbm: float, span_db: float = 120):
         self.plot_widget.setYRange(ref_dbm - span_db, ref_dbm)
-    
-   

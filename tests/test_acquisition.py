@@ -5,6 +5,7 @@ from unittest.mock import patch
 import numpy as np
 
 from backend.acquisition import (
+    AcquisitionError,
     HackRFAcquisition,
     SyntheticAcquisition,
     SoapyAcquisition,
@@ -109,6 +110,16 @@ class FakeUSRPDevice(FakeDevice):
 
 
 class AcquisitionTests(unittest.TestCase):
+    def test_x300_profile_rejects_unsupported_rate_and_span(self):
+        with self.assertRaises(AcquisitionError):
+            USRPAcquisition(
+                AcquisitionConfig("USRP", 915e6, 201e6, 160e6, 20)
+            )
+        with self.assertRaises(AcquisitionError):
+            USRPAcquisition(
+                AcquisitionConfig("USRP", 915e6, 200e6, 161e6, 20)
+            )
+
     def test_factory_keeps_hackrf_and_usrp_paths_separate_when_switching(self):
         hackrf = AcquisitionConfig("HACKRF", 100e6, 2e6, 2e6, 20)
         usrp = AcquisitionConfig("USRP", 100e6, 2e6, 2e6, 20)

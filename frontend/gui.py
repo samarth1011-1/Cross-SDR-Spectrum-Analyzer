@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QToolBar, QLabel, QComboBox, QDoubleSpinBox, QPushButton,
     QStatusBar, QSplitter, QSpinBox, QFrame, QSizePolicy,
     QDockWidget, QTableWidget, QTableWidgetItem, QHeaderView,
-    QGroupBox, QMenu, QFormLayout
+    QGroupBox, QMenu, QFormLayout, QGridLayout, QTabWidget
 )
 
 # --- Imported Modules (Assumes these exist in the project) ---
@@ -35,7 +35,34 @@ from frontend.waterfall import WaterfallWidget
 from frontend.recorder import Recorder
 from frontend.freq_control import FrequencyControl
 from frontend.marker_dropdown import MarkerSelectorButton
-from frontend.carrier_window import CarrierActivityWindow
+
+
+DEVICE_PROFILES = {
+    "SIMULATOR": {
+        "sample_rates": ("2", "5", "8", "10", "12.5", "16", "20"),
+        "sample_rate": "20",
+        "max_span_hz": 20e6,
+        "span_hz": 20e6,
+        "summary": "20 MS/s · 20 MHz span",
+        "detail": "Local IQ simulator · no SDR hardware required",
+    },
+    "HACKRF": {
+        "sample_rates": ("2", "5", "8", "10", "12.5", "16", "20"),
+        "sample_rate": "20",
+        "max_span_hz": 20e6,
+        "span_hz": 20e6,
+        "summary": "20 MS/s · 20 MHz span",
+        "detail": "HackRF One supported ceiling · dedicated USB 2.0 bus recommended",
+    },
+    "USRP": {
+        "sample_rates": ("10", "20", "25", "40", "50", "100", "200"),
+        "sample_rate": "200",
+        "max_span_hz": 160e6,
+        "span_hz": 160e6,
+        "summary": "200 MS/s · 160 MHz span",
+        "detail": "X300-series maximum · requires 160 MHz daughterboard and 10 GigE/PCIe",
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -196,8 +223,8 @@ class MainWindow(QMainWindow):
         self._build_left_dock()
         self._build_right_dock()
         self._build_delta_readout()
-        self.carrier_window = CarrierActivityWindow(self)
         self._build_statusbar()
+        self._build_panel_toggles()
         
         # Wiring and configuration
         self._wire_actions()
@@ -207,37 +234,134 @@ class MainWindow(QMainWindow):
 
     def _apply_dark_theme(self):
         self.setStyleSheet("""
-            QMainWindow { background-color: #0B0B0B; }
+            QMainWindow { background-color: #080D14; }
+            QWidget {
+                color: #DCE6F2;
+                font-family: "Segoe UI", Arial, sans-serif;
+                font-size: 10pt;
+            }
             QDockWidget {
-                color: #E0E0E0;
-                font-weight: bold;
+                color: #E8F0F8;
+                font-weight: 600;
             }
             QDockWidget::title {
-                background: #1A1A1A;
-                padding: 6px;
-                border-bottom: 1px solid #333333;
+                background: #101722;
+                padding: 10px 12px;
+                border-bottom: 1px solid #253144;
             }
-            QWidget { color: #E0E0E0; font-family: "Segoe UI", Arial, sans-serif; }
-            QToolBar { background-color: #121212; border-bottom: 1px solid #2A2A2A; spacing: 10px; }
+            QToolBar {
+                background-color: #0D141F;
+                border: none;
+                border-bottom: 1px solid #253144;
+                spacing: 10px;
+                padding: 7px 12px;
+            }
             QPushButton {
-                background-color: #1E1E1E; border: 1px solid #3A3A3A;
-                padding: 6px 12px; border-radius: 4px;
+                background-color: #172130;
+                border: 1px solid #2A394E;
+                padding: 8px 13px;
+                border-radius: 6px;
+                font-weight: 600;
             }
-            QPushButton:hover { background-color: #2D2D2D; border: 1px solid #555555; }
-            QPushButton:checked { background-color: #005577; border: 1px solid #00AAFF; }
+            QPushButton:hover { background-color: #202E40; border-color: #3B82A0; }
+            QPushButton:pressed { background-color: #101A27; }
+            QPushButton:checked {
+                background-color: #123B4A;
+                border-color: #22B8CF;
+                color: #67E8F9;
+            }
             QComboBox, QSpinBox, QDoubleSpinBox {
-                background-color: #1A1A1A; border: 1px solid #333333;
-                padding: 4px; border-radius: 2px;
+                background-color: #111A27;
+                border: 1px solid #2A394E;
+                padding: 7px 9px;
+                border-radius: 6px;
+                selection-background-color: #155E75;
             }
+            QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover { border-color: #3B82A0; }
+            QComboBox::drop-down { border: none; width: 24px; }
             QGroupBox {
-                border: 1px solid #333333; border-radius: 4px; margin-top: 10px;
+                background-color: #101722;
+                border: 1px solid #253144;
+                border-radius: 9px;
+                margin-top: 13px;
+                padding: 12px 8px 8px 8px;
             }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px 0 3px; color: #888888; }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 5px;
+                color: #8FA3B8;
+                font-weight: 600;
+            }
+            QTabWidget::pane { border: none; background: #0B111A; }
+            QTabBar::tab {
+                background: #101722;
+                color: #8294A8;
+                border-bottom: 2px solid transparent;
+                padding: 10px 14px;
+                min-width: 72px;
+            }
+            QTabBar::tab:selected { color: #67E8F9; border-bottom-color: #22B8CF; }
+            QTabBar::tab:hover { color: #DCE6F2; }
             QTableWidget {
-                background-color: #121212; alternate-background-color: #1A1A1A;
-                gridline-color: #333333; border: 1px solid #333333;
+                background-color: #0D141F;
+                alternate-background-color: #111B28;
+                gridline-color: #253144;
+                border: 1px solid #253144;
+                border-radius: 7px;
             }
-            QHeaderView::section { background-color: #1E1E1E; padding: 4px; border: 1px solid #333333; }
+            QHeaderView::section {
+                background-color: #172130;
+                color: #9FB0C2;
+                padding: 7px;
+                border: none;
+                border-right: 1px solid #253144;
+            }
+            QStatusBar { background: #0D141F; border-top: 1px solid #253144; }
+            QStatusBar QLabel { color: #8FA3B8; padding: 2px 5px; }
+            QLabel#BrandTitle { color: #F1F7FC; font-size: 15pt; font-weight: 700; }
+            QLabel#BrandSubtitle { color: #6F849A; font-size: 8.5pt; }
+            QLabel#SectionLabel { color: #75889D; font-size: 8pt; font-weight: 700; }
+            QLabel#ProfileBadge {
+                background: #102A35;
+                color: #67E8F9;
+                border: 1px solid #20556A;
+                border-radius: 6px;
+                padding: 7px 10px;
+            }
+            QLabel#ProfileDetail {
+                background: #0D202A;
+                color: #87AFC0;
+                border: 1px solid #1D4657;
+                border-radius: 7px;
+                padding: 9px;
+            }
+            QLabel#MetricValue { color: #EAF6FF; font-weight: 700; }
+            QPushButton#RunButton {
+                background: #0F4C3A;
+                border-color: #1B7A5C;
+                color: #8FF0C7;
+                padding-left: 18px;
+                padding-right: 18px;
+            }
+            QPushButton#RunButton:checked {
+                background: #4A3512;
+                border-color: #A66D18;
+                color: #FFD38A;
+            }
+            QPushButton#PanelToggle {
+                background: #111A27;
+                color: #67E8F9;
+                border: 1px solid #2A5366;
+                border-radius: 5px;
+                padding: 0px;
+                font-size: 17pt;
+                font-weight: 700;
+            }
+            QPushButton#PanelToggle:hover {
+                background: #123B4A;
+                border-color: #22B8CF;
+            }
         """)
 
     # -----------------------------------------------------------------------
@@ -254,6 +378,8 @@ class MainWindow(QMainWindow):
         # 70% Spectrum, 30% Waterfall allocation
         center_split.setStretchFactor(0, 7)
         center_split.setStretchFactor(1, 3)
+        center_split.setHandleWidth(3)
+        center_split.setSizes([620, 280])
 
         self.setCentralWidget(center_split)
 
@@ -264,84 +390,71 @@ class MainWindow(QMainWindow):
     # -----------------------------------------------------------------------
     # Top Control Ribbon
     # -----------------------------------------------------------------------
-    def _create_toolbar_group(self, title: str, widgets: list) -> QWidget:
-        container = QWidget()
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(4, 0, 4, 0)
-        
-        lbl = QLabel(f" {title} | ")
-        lbl.setStyleSheet("color: #666666; font-weight: bold;")
-        layout.addWidget(lbl)
-        
-        for w in widgets:
-            layout.addWidget(w)
-        return container
-
     def _build_toolbar_ribbon(self):
-        self._toolbar = QToolBar("Main Ribbon")
+        self._toolbar = QToolBar("Analyzer Header")
         self._toolbar.setMovable(False)
-        self._toolbar.setIconSize(self._toolbar.iconSize())
+        self._toolbar.setFixedHeight(72)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self._toolbar)
 
-        # Device & Streaming
+        brand = QWidget()
+        brand_layout = QVBoxLayout(brand)
+        brand_layout.setContentsMargins(0, 0, 20, 0)
+        brand_layout.setSpacing(0)
+        brand_title = QLabel("FREQUENCY ANALYZER")
+        brand_title.setObjectName("BrandTitle")
+        brand_subtitle = QLabel("REAL-TIME RF SPECTRUM WORKBENCH")
+        brand_subtitle.setObjectName("BrandSubtitle")
+        brand_layout.addWidget(brand_title)
+        brand_layout.addWidget(brand_subtitle)
+        self._toolbar.addWidget(brand)
+
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._toolbar.addWidget(spacer)
+
+        device_block = QWidget()
+        device_layout = QVBoxLayout(device_block)
+        device_layout.setContentsMargins(0, 0, 0, 0)
+        device_layout.setSpacing(2)
+        device_label = QLabel("INPUT DEVICE")
+        device_label.setObjectName("SectionLabel")
         self.sdr_type_combo = QComboBox()
-        self.sdr_type_combo.addItems(["SIMULATOR", "HackRF", "USRP"])
-        
-        self.btn_run_stop = QPushButton("Run (Live Streaming)")
+        self.sdr_type_combo.setMinimumWidth(190)
+        self.sdr_type_combo.addItem("Simulator", "SIMULATOR")
+        self.sdr_type_combo.addItem("HackRF One", "HACKRF")
+        self.sdr_type_combo.addItem("Ettus USRP X301", "USRP")
+        device_layout.addWidget(device_label)
+        device_layout.addWidget(self.sdr_type_combo)
+        self._toolbar.addWidget(device_block)
+
+        self.lbl_profile_badge = QLabel()
+        self.lbl_profile_badge.setObjectName("ProfileBadge")
+        self.lbl_profile_badge.setMinimumWidth(185)
+        self._toolbar.addWidget(self.lbl_profile_badge)
+
+        self.btn_run_stop = QPushButton("Start acquisition")
+        self.btn_run_stop.setObjectName("RunButton")
         self.btn_run_stop.setCheckable(True)
-        self.btn_run_stop.setStyleSheet("font-weight: bold; color: #00FF55;")
-
-        self._toolbar.addWidget(self._create_toolbar_group("DEVICE", [self.sdr_type_combo, self.btn_run_stop]))
-
-        # Traces
-        self.btn_clear_write = QPushButton("Clear Write")
-        self.btn_max_hold    = QPushButton("Max Hold")
-        self.btn_min_hold    = QPushButton("Min Hold")
-        self.btn_average     = QPushButton("Average")
-        
-        for btn in (self.btn_clear_write, self.btn_max_hold, self.btn_min_hold, self.btn_average):
-            btn.setCheckable(True)
-        self.btn_clear_write.setChecked(True)
-
-        self._toolbar.addWidget(self._create_toolbar_group("TRACES", [
-            self.btn_clear_write, self.btn_max_hold, self.btn_min_hold, self.btn_average
-        ]))
-
-        # Markers
-        self.marker_selector_btn = MarkerSelectorButton()
-        self.btn_delta_marker = QPushButton("Δ Delta")
-        self.btn_delta_marker.setCheckable(True)
-        self.btn_clear_markers = QPushButton("Clear All")
-        
-        self._toolbar.addWidget(self._create_toolbar_group("MARKERS", [
-            self.marker_selector_btn, self.btn_delta_marker, self.btn_clear_markers
-        ]))
-
-        # Utilities
-        self.btn_screenshot = QPushButton("Screenshot")
-        self.btn_export_csv = QPushButton("Export CSV")
-        self.btn_carrier_activity = QPushButton("Carrier Activity")
-
-        self._toolbar.addWidget(self._create_toolbar_group("UTILITIES", [
-            self.btn_carrier_activity,
-            self.btn_screenshot,
-            self.btn_export_csv
-        ]))
+        self._toolbar.addWidget(self.btn_run_stop)
 
     # -----------------------------------------------------------------------
     # Left Dock Panel
     # -----------------------------------------------------------------------
     def _build_left_dock(self):
-        self.left_dock = QDockWidget("Configuration", self)
+        self.left_dock = QDockWidget("Analyzer Setup", self)
         self.left_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea)
         self.left_dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable | QDockWidget.DockWidgetFeature.DockWidgetFloatable)
+        self.left_dock.setMinimumWidth(280)
+        self.left_dock.setMaximumWidth(330)
         
         container = QWidget()
         layout = QVBoxLayout(container)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         
         # Frequency Group
-        grp_freq = QGroupBox("Frequency")
+        grp_freq = QGroupBox("Tuning")
         lyt_freq = QFormLayout(grp_freq)
         self.center_freq_ctrl = FrequencyControl(initial_hz=2440e6, minimum_hz=1e6, maximum_hz=6e9, default_unit="MHz")
         self.span_ctrl = FrequencyControl(initial_hz=20e6, minimum_hz=1e5, maximum_hz=20e6, default_unit="MHz")
@@ -354,7 +467,7 @@ class MainWindow(QMainWindow):
         lyt_rx = QFormLayout(grp_rx)
         self.sample_rate_combo = QComboBox()
         self.sample_rate_combo.addItems(["2", "5", "8", "10", "12.5", "16", "20"])
-        self.sample_rate_combo.setCurrentText("10")
+        self.sample_rate_combo.setCurrentText("20")
         
         self.gain_spin = QSpinBox()
         self.gain_spin.setRange(0, 62)
@@ -370,6 +483,11 @@ class MainWindow(QMainWindow):
         lyt_rx.addRow("Gain (dB):", self.gain_spin)
         layout.addWidget(grp_rx)
 
+        self.lbl_profile_detail = QLabel()
+        self.lbl_profile_detail.setObjectName("ProfileDetail")
+        self.lbl_profile_detail.setWordWrap(True)
+        layout.addWidget(self.lbl_profile_detail)
+
         self.left_dock.setWidget(container)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.left_dock)
 
@@ -377,45 +495,120 @@ class MainWindow(QMainWindow):
     # Right Dock Panel (Analytics & Tables)
     # -----------------------------------------------------------------------
     def _build_right_dock(self):
-        self.right_dock = QDockWidget("Analytics & Measurements", self)
+        self.right_dock = QDockWidget("Analysis", self)
         self.right_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
         self.right_dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable | QDockWidget.DockWidgetFeature.DockWidgetFloatable)
-        
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.right_dock.setMinimumWidth(360)
+        self.right_dock.setMaximumWidth(410)
 
-        # Measurements
+        tabs = QTabWidget()
+        tabs.setDocumentMode(True)
+        tabs.tabBar().setExpanding(True)
+        tabs.tabBar().setUsesScrollButtons(False)
+
+        # Measurements tab
+        measurements_tab = QWidget()
+        measurements_layout = QVBoxLayout(measurements_tab)
+        measurements_layout.setContentsMargins(12, 12, 12, 12)
+        measurements_layout.setSpacing(12)
         grp_meas = QGroupBox("Live Measurements")
         lyt_meas = QFormLayout(grp_meas)
+        lyt_meas.setVerticalSpacing(12)
         self.lbl_meas_peak_freq = QLabel("-- MHz")
         self.lbl_meas_peak_amp  = QLabel("-- dBFS")
         self.lbl_meas_noise     = QLabel("-- dBFS")
         self.lbl_meas_obw       = QLabel("-- kHz")
         self.lbl_meas_chan_pwr  = QLabel("-- dBFS")
-        # Included a specific sub-noise bandwidth tracker metric
-        self.lbl_meas_sub_noise_bw = QLabel("-- kHz") 
+        for label in (
+            self.lbl_meas_peak_freq,
+            self.lbl_meas_peak_amp,
+            self.lbl_meas_noise,
+            self.lbl_meas_obw,
+            self.lbl_meas_chan_pwr,
+        ):
+            label.setObjectName("MetricValue")
 
         lyt_meas.addRow("Peak Freq:", self.lbl_meas_peak_freq)
         lyt_meas.addRow("Peak Amp:", self.lbl_meas_peak_amp)
         lyt_meas.addRow("Noise Floor:", self.lbl_meas_noise)
         lyt_meas.addRow("Occ Bandwidth:", self.lbl_meas_obw)
         lyt_meas.addRow("Channel Power:", self.lbl_meas_chan_pwr)
-        lyt_meas.addRow("Carrier BW (Sub-Noise):", self.lbl_meas_sub_noise_bw)
-        layout.addWidget(grp_meas)
+        measurements_layout.addWidget(grp_meas)
 
-        # Trace Status
+        grp_export = QGroupBox("Capture & Export")
+        export_layout = QHBoxLayout(grp_export)
+        self.btn_screenshot = QPushButton("Screenshot")
+        self.btn_export_csv = QPushButton("Export CSV")
+        export_layout.addWidget(self.btn_screenshot)
+        export_layout.addWidget(self.btn_export_csv)
+        measurements_layout.addWidget(grp_export)
+        measurements_layout.addStretch(1)
+
+        # Traces tab
+        traces_tab = QWidget()
+        traces_layout = QVBoxLayout(traces_tab)
+        traces_layout.setContentsMargins(12, 12, 12, 12)
+        traces_layout.setSpacing(12)
+        grp_trace_controls = QGroupBox("Visible Traces")
+        trace_grid = QGridLayout(grp_trace_controls)
+        self.btn_clear_write = QPushButton("CW · Clear Write")
+        self.btn_max_hold = QPushButton("Max Hold")
+        self.btn_min_hold = QPushButton("Min Hold")
+        self.btn_average = QPushButton("Average")
+        for btn in (
+            self.btn_clear_write,
+            self.btn_max_hold,
+            self.btn_min_hold,
+            self.btn_average,
+        ):
+            btn.setCheckable(True)
+            btn.setMinimumHeight(42)
+        self.btn_clear_write.setChecked(True)
+        trace_grid.addWidget(self.btn_clear_write, 0, 0)
+        trace_grid.addWidget(self.btn_max_hold, 0, 1)
+        trace_grid.addWidget(self.btn_min_hold, 1, 0)
+        trace_grid.addWidget(self.btn_average, 1, 1)
+        traces_layout.addWidget(grp_trace_controls)
+
         grp_traces = QGroupBox("Active Traces")
         lyt_traces = QVBoxLayout(grp_traces)
         self.lbl_trace_status = QLabel("Clear Write: ON\nMax Hold: OFF\nMin Hold: OFF\nAverage: OFF")
         self.lbl_trace_status.setFont(QFont("Consolas", 9))
         lyt_traces.addWidget(self.lbl_trace_status)
-        layout.addWidget(grp_traces)
+        traces_layout.addWidget(grp_traces)
+        traces_layout.addStretch(1)
 
-        # Marker Table
-        grp_mkrs = QGroupBox("Marker Table")
-        lyt_mkrs = QVBoxLayout(grp_mkrs)
+        # Markers tab
+        markers_tab = QWidget()
+        markers_layout = QVBoxLayout(markers_tab)
+        markers_layout.setContentsMargins(12, 12, 12, 12)
+        markers_layout.setSpacing(12)
+
+        grp_marker_controls = QGroupBox("Marker Control")
+        marker_form = QFormLayout(grp_marker_controls)
+        self.marker_selector_btn = MarkerSelectorButton()
+        self.trace_marker_combo = QComboBox()
+        self.trace_marker_combo.addItem("CW", "cw")
+        self.trace_marker_combo.addItem("Max hold", "max_hold")
+        self.trace_marker_combo.addItem("Min hold", "min_hold")
+        self.trace_marker_combo.addItem("Average", "average")
+        marker_form.addRow("Active marker:", self.marker_selector_btn)
+        marker_form.addRow("Trace marker:", self.trace_marker_combo)
+
+        marker_actions = QHBoxLayout()
+        self.btn_delta_marker = QPushButton("Δ Delta")
+        self.btn_delta_marker.setCheckable(True)
+        self.btn_delta_marker.setEnabled(False)
+        self.btn_clear_markers = QPushButton("Clear All")
+        marker_actions.addWidget(self.btn_delta_marker)
+        marker_actions.addWidget(self.btn_clear_markers)
+        marker_form.addRow(marker_actions)
+        markers_layout.addWidget(grp_marker_controls)
+
+        self.grp_mkrs = QGroupBox("Marker Table — CW")
+        lyt_mkrs = QVBoxLayout(self.grp_mkrs)
         self.table_markers = QTableWidget(0, 4)
+        self.table_markers.setMinimumHeight(280)
         self.table_markers.setHorizontalHeaderLabels(["ID", "Freq", "Amp", "Delta"])
         self.table_markers.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table_markers.setAlternatingRowColors(True)
@@ -426,10 +619,89 @@ class MainWindow(QMainWindow):
             | QTableWidget.EditTrigger.EditKeyPressed
         )
         lyt_mkrs.addWidget(self.table_markers)
-        layout.addWidget(grp_mkrs)
+        markers_layout.addWidget(self.grp_mkrs, 1)
 
-        self.right_dock.setWidget(container)
+        tabs.addTab(measurements_tab, "Measure")
+        tabs.addTab(traces_tab, "Traces")
+        tabs.addTab(markers_tab, "Markers")
+        self.analysis_tabs = tabs
+        self.right_dock.setWidget(tabs)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.right_dock)
+
+    def _build_panel_toggles(self):
+        self.btn_left_panel_toggle = QPushButton("‹", self)
+        self.btn_right_panel_toggle = QPushButton("›", self)
+        for button in (self.btn_left_panel_toggle, self.btn_right_panel_toggle):
+            button.setObjectName("PanelToggle")
+            button.setFixedSize(26, 58)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        self.btn_left_panel_toggle.setAccessibleName("Toggle Analyzer Setup panel")
+        self.btn_right_panel_toggle.setAccessibleName("Toggle Analysis panel")
+        self.btn_left_panel_toggle.clicked.connect(self._toggle_left_panel)
+        self.btn_right_panel_toggle.clicked.connect(self._toggle_right_panel)
+        self.left_dock.visibilityChanged.connect(self._sync_panel_toggles)
+        self.right_dock.visibilityChanged.connect(self._sync_panel_toggles)
+        self._sync_panel_toggles()
+
+    def _toggle_left_panel(self):
+        if self.left_dock.isVisible():
+            self.left_dock.hide()
+        else:
+            if self.left_dock.isFloating():
+                self.left_dock.setFloating(False)
+            self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.left_dock)
+            self.left_dock.show()
+            self.left_dock.raise_()
+        self._sync_panel_toggles()
+
+    def _toggle_right_panel(self):
+        if self.right_dock.isVisible():
+            self.right_dock.hide()
+        else:
+            if self.right_dock.isFloating():
+                self.right_dock.setFloating(False)
+            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.right_dock)
+            self.right_dock.show()
+            self.right_dock.raise_()
+        self._sync_panel_toggles()
+
+    def _sync_panel_toggles(self, *_):
+        left_open = self.left_dock.isVisible()
+        right_open = self.right_dock.isVisible()
+        self.btn_left_panel_toggle.setText("‹" if left_open else "›")
+        self.btn_right_panel_toggle.setText("›" if right_open else "‹")
+        self.btn_left_panel_toggle.setToolTip(
+            "Hide Analyzer Setup" if left_open else "Show Analyzer Setup"
+        )
+        self.btn_right_panel_toggle.setToolTip(
+            "Hide Analysis" if right_open else "Show Analysis"
+        )
+        self._position_panel_toggles()
+
+    def _position_panel_toggles(self):
+        if not hasattr(self, "btn_left_panel_toggle"):
+            return
+        central = self.centralWidget().geometry()
+        handle_height = self.btn_left_panel_toggle.height()
+        y = central.top() + max(8, (central.height() - handle_height) // 2)
+
+        if self.left_dock.isVisible() and not self.left_dock.isFloating():
+            left_x = self.left_dock.geometry().right() + 1
+        else:
+            left_x = 0
+
+        if self.right_dock.isVisible() and not self.right_dock.isFloating():
+            right_x = self.right_dock.geometry().left() - self.btn_right_panel_toggle.width()
+        else:
+            right_x = self.width() - self.btn_right_panel_toggle.width()
+
+        self.btn_left_panel_toggle.move(max(0, left_x), y)
+        self.btn_right_panel_toggle.move(
+            min(self.width() - self.btn_right_panel_toggle.width(), right_x), y
+        )
+        self.btn_left_panel_toggle.raise_()
+        self.btn_right_panel_toggle.raise_()
 
     # -----------------------------------------------------------------------
     # Status Bar
@@ -469,24 +741,26 @@ class MainWindow(QMainWindow):
         
         self.btn_screenshot.clicked.connect(lambda: self.recorder.take_screenshot())
         self.btn_export_csv.clicked.connect(lambda: self.recorder.export_csv(self._last_frame))
-        self.btn_carrier_activity.clicked.connect(self._show_carrier_activity)
 
         # Marker actions
         self.spectrum_widget.markers_changed.connect(self._on_markers_changed)
-        self.marker_selector_btn.marker_selected.connect(self.spectrum_widget.set_active_marker)
-        self.marker_selector_btn.marker_selected.connect(self._refresh_readout_for_current_marker)
+        self.marker_selector_btn.marker_selected.connect(self._on_marker_selected)
         self.btn_delta_marker.clicked.connect(self._on_delta_toggle)
         self.btn_clear_markers.clicked.connect(self._on_clear_markers)
         self.table_markers.itemChanged.connect(self._on_marker_table_changed)
+        self.trace_marker_combo.currentIndexChanged.connect(
+            self._on_trace_marker_changed
+        )
 
         self.center_freq_ctrl.value_changed_hz.connect(self._configuration_changed)
         self.span_ctrl.value_changed_hz.connect(self._configuration_changed)
-        self.sample_rate_combo.currentTextChanged.connect(self._configuration_changed)
+        self.sample_rate_combo.currentTextChanged.connect(self._sample_rate_changed)
         self.gain_spin.valueChanged.connect(self._configuration_changed)
         self.sdr_type_combo.currentTextChanged.connect(self._device_type_changed)   # was _configuration_changed
         self.reference_level_spin.valueChanged.connect(
          self._reference_level_changed
         )
+        self._apply_device_profile()
     def _update_trace_modes(self):
         cw = self.btn_clear_write.isChecked()
         mh = self.btn_max_hold.isChecked()
@@ -507,6 +781,34 @@ class MainWindow(QMainWindow):
                        f"Min Hold: {'ON' if mi else 'OFF'}\n"
                        f"Average: {'ON' if av else 'OFF'}")
         self.lbl_trace_status.setText(status_text)
+
+    def _on_trace_marker_changed(self, _index=None):
+        trace_name = self.trace_marker_combo.currentData()
+        trace_button = {
+            "cw": self.btn_clear_write,
+            "max_hold": self.btn_max_hold,
+            "min_hold": self.btn_min_hold,
+            "average": self.btn_average,
+        }[trace_name]
+        if not trace_button.isChecked():
+            trace_button.setChecked(True)
+            self._update_trace_modes()
+        self.spectrum_widget.set_marker_trace(trace_name)
+        label = self.trace_marker_combo.currentText()
+        self.grp_mkrs.setTitle(f"Marker Table — {label}")
+        self.status_bar.showMessage(f"Markers attached to {label} trace", 2500)
+
+    def _on_marker_selected(self, marker_id: int):
+        self.spectrum_widget.set_active_marker(marker_id)
+        self.btn_delta_marker.setEnabled(marker_id != 0)
+        self.btn_delta_marker.blockSignals(True)
+        try:
+            self.btn_delta_marker.setChecked(
+                marker_id in self.spectrum_widget._delta_markers
+            )
+        finally:
+            self.btn_delta_marker.blockSignals(False)
+        self._refresh_readout_for_current_marker(marker_id)
 
     def _build_shortcuts(self):
         shortcut_map = {
@@ -535,12 +837,19 @@ class MainWindow(QMainWindow):
 
     def _show_spectrum_context_menu(self, pos: QPoint):
         menu = QMenu(self)
-        menu.setStyleSheet("QMenu { background-color: #1A1A1A; border: 1px solid #333333; } QMenu::item:selected { background-color: #005577; }")
+        menu.setStyleSheet(
+            "QMenu { background-color: #151B26; border: 1px solid #334155; padding: 5px; } "
+            "QMenu::item { padding: 7px 24px; border-radius: 4px; } "
+            "QMenu::item:selected { background-color: #123B4A; color: #67E8F9; }"
+        )
         
         action_add_marker = QAction("Add Marker", self)
         action_del_marker = QAction("Clear Markers", self)
         action_center = QAction("Center Here", self)
         action_peak = QAction("Peak Search", self)
+        marker_enabled = self.marker_selector_btn.current_marker_id() != 0
+        action_add_marker.setEnabled(marker_enabled)
+        action_peak.setEnabled(marker_enabled)
         
         menu.addAction(action_add_marker)
         menu.addAction(action_del_marker)
@@ -594,7 +903,7 @@ class MainWindow(QMainWindow):
 
     def _acquisition_config(self):
         return AcquisitionConfig(
-            device_type=self.sdr_type_combo.currentText(),
+            device_type=self.sdr_type_combo.currentData(),
             center_frequency=self.center_freq_ctrl.value_hz(),
             sample_rate=float(self.sample_rate_combo.currentText()) * 1e6,
             span=self.span_ctrl.value_hz(),
@@ -607,13 +916,43 @@ class MainWindow(QMainWindow):
             self.lbl_device_status.setText("Device: Reconfiguring...")
             self.backend.start(self._acquisition_config())
 
+    def _sample_rate_changed(self, sample_rate_text: str):
+        if not sample_rate_text:
+            return
+        profile = DEVICE_PROFILES[self.sdr_type_combo.currentData()]
+        maximum_span = min(
+            profile["max_span_hz"], float(sample_rate_text) * 1e6
+        )
+        self.span_ctrl.set_limits_hz(1e5, maximum_span)
+        self._configuration_changed()
+
     def _device_type_changed(self, *_):
         if self._is_running:
             self._stop_acquisition()
+        self._apply_device_profile()
         self.lbl_device_status.setText(
             f"Device: {self.sdr_type_combo.currentText()} selected - press Run"
         )
-        
+
+    def _apply_device_profile(self):
+        device_type = self.sdr_type_combo.currentData()
+        profile = DEVICE_PROFILES[device_type]
+
+        self.sample_rate_combo.blockSignals(True)
+        try:
+            self.sample_rate_combo.clear()
+            self.sample_rate_combo.addItems(profile["sample_rates"])
+            self.sample_rate_combo.setCurrentText(profile["sample_rate"])
+        finally:
+            self.sample_rate_combo.blockSignals(False)
+
+        self.span_ctrl.set_limits_hz(1e5, profile["max_span_hz"])
+        self.span_ctrl.set_suffix_visible_unit("MHz")
+        self.span_ctrl.set_value_hz(profile["span_hz"])
+        self.lbl_profile_badge.setText(profile["summary"])
+        self.lbl_profile_detail.setText(profile["detail"])
+        self.lbl_profile_badge.setToolTip(profile["detail"])
+
     def _toggle_run(self):
         if self._is_running:
             self._stop_acquisition()
@@ -623,16 +962,14 @@ class MainWindow(QMainWindow):
     def _start_acquisition(self):
         self._is_running = True
         self.btn_run_stop.setChecked(True)
-        self.btn_run_stop.setText("Stop (Space)")
-        self.btn_run_stop.setStyleSheet("font-weight: bold; color: #FF4444;")
+        self.btn_run_stop.setText("Stop acquisition")
         self.lbl_device_status.setText("Device: Connecting...")
         self.backend.start(self._acquisition_config())
 
     def _stop_acquisition(self):
         self._is_running = False
         self.btn_run_stop.setChecked(False)
-        self.btn_run_stop.setText("Run (Live Streaming)")
-        self.btn_run_stop.setStyleSheet("font-weight: bold; color: #00FF55;")
+        self.btn_run_stop.setText("Start acquisition")
         self.lbl_device_status.setText("Device: Idle")
         self.backend.stop()
 
@@ -647,14 +984,12 @@ class MainWindow(QMainWindow):
         self.lbl_device_status.setText(f"Device error: {message}")
         self._is_running = False
         self.btn_run_stop.setChecked(False)
-        self.btn_run_stop.setText("Run (Live Streaming)")
-        self.btn_run_stop.setStyleSheet("font-weight: bold; color: #00FF55;")
+        self.btn_run_stop.setText("Start acquisition")
 
     def _on_frame_ready(self, frame: SpectrumFrame):
         self._last_frame = frame
         self.spectrum_widget.update_frame(frame)
         self.waterfall_widget.update_frame(frame)
-        self.carrier_window.update_frame(frame)
 
         peak = frame.peaks[0] if frame.peaks else None
         if peak is not None:
@@ -670,18 +1005,12 @@ class MainWindow(QMainWindow):
         self.lbl_meas_noise.setText(f"{frame.noise_floor:.2f} dBFS")
         self.lbl_meas_obw.setText(f"{frame.bandwidth/1e3:.3f} kHz")
         self.lbl_meas_chan_pwr.setText(f"{frame.channel_power:.2f} dBFS")
-        self.lbl_meas_sub_noise_bw.setText(f"{frame.carrier_bandwidth/1e3:.3f} kHz")
         self.lbl_fft_size.setText(f"FFT Size: {frame.fft_size}")
         self.lbl_rbw.setText(f"RBW: {frame.rbw/1e3:.3f} kHz")
         now = time.monotonic()
         if self._last_frame_time is not None and now > self._last_frame_time:
             self.lbl_fps.setText(f"FPS: {1.0/(now-self._last_frame_time):.1f}")
         self._last_frame_time = now
-
-    def _show_carrier_activity(self):
-        self.carrier_window.show()
-        self.carrier_window.raise_()
-        self.carrier_window.activateWindow()
 
     # -----------------------------------------------------------------------
     # Marker & Delta Logic
@@ -824,13 +1153,13 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._position_panel_toggles()
         # Keep delta window floating properly
         if hasattr(self, 'delta_readout') and self.delta_readout.isVisible():
             self.delta_readout.move(self.width() - self.delta_readout.width() - 320, 100)
 
     def closeEvent(self, event):
         self.backend.stop()
-        self.carrier_window.close()
         super().closeEvent(event)
 
 

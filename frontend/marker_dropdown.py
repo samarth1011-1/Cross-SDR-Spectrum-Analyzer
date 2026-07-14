@@ -20,7 +20,7 @@ from PyQt6.QtGui import QKeyEvent
 class _DropdownPanel(QFrame):
     """The popup panel. Frameless window that stays on screen until dismissed."""
 
-    option_selected = pyqtSignal(int)   # emits marker IDs 1 through 6
+    option_selected = pyqtSignal(int)   # emits 0 for None or marker IDs 1 through 6
     closed = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -29,12 +29,13 @@ class _DropdownPanel(QFrame):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet("""
             #MarkerDropdownPanel {
-                background-color: #2B2B2B;
-                border: 1px solid #4A4A4A;
+                background-color: #151B26;
+                border: 1px solid #334155;
+                border-radius: 8px;
             }
             QPushButton {
                 background-color: transparent;
-                color: #E0E0E0;
+                color: #DCE6F2;
                 border: none;
                 border-radius: 0px;
                 padding: 8px 24px;
@@ -42,11 +43,11 @@ class _DropdownPanel(QFrame):
                 text-align: left;
             }
             QPushButton:hover {
-                background-color: #3A3A3A;
+                background-color: #202A39;
             }
             QPushButton:checked {
-                background-color: #505050;
-                color: #FFFFFF;
+                background-color: #123B4A;
+                color: #67E8F9;
             }
         """)
 
@@ -55,17 +56,15 @@ class _DropdownPanel(QFrame):
         layout.setSpacing(0)
 
         self._buttons = {}
-        for i, label in enumerate(
-            ["Marker 1", "Marker 2", "Marker 3", "Marker 4", "Marker 5", "Marker 6"],
-            start=1,
-        ):
+        options = [(0, "None")] + [(i, f"Marker {i}") for i in range(1, 7)]
+        for marker_id, label in options:
             btn = QPushButton(label)
             btn.setCheckable(True)
-            btn.clicked.connect(lambda _, mid=i: self._on_option(mid))
+            btn.clicked.connect(lambda _, mid=marker_id: self._on_option(mid))
             layout.addWidget(btn)
-            self._buttons[i] = btn
+            self._buttons[marker_id] = btn
 
-        self._buttons[1].setChecked(True)
+        self._buttons[0].setChecked(True)
 
     def _on_option(self, marker_id: int):
         for mid, btn in self._buttons.items():
@@ -95,14 +94,14 @@ class MarkerSelectorButton(QPushButton):
     """
     Drop-in replacement for the marker QComboBox.
     Shows persistent popup — hover-out does NOT close it.
-    Signals: marker_selected(int) emits a marker ID from 1 through 6.
+    Signals: marker_selected(int) emits 0 for None or a marker ID from 1 through 6.
     """
 
     marker_selected = pyqtSignal(int)
 
     def __init__(self, parent=None):
-        super().__init__("Marker 1  ▾", parent)
-        self._current_id = 1
+        super().__init__("None  ▾", parent)
+        self._current_id = 0
         self._panel = _DropdownPanel()
         self._panel.option_selected.connect(self._on_marker_selected)
         self._panel.closed.connect(self._on_panel_closed)
@@ -120,13 +119,13 @@ class MarkerSelectorButton(QPushButton):
         # Position the panel directly below this button
         btn_bottom_left = self.mapToGlobal(QPoint(0, self.height()))
         self._panel.move(btn_bottom_left)
-        self._panel.resize(160, 33 * 6)
+        self._panel.resize(170, 36 * 7)
         self._panel.show()
         self._panel_open = True
 
     def _on_marker_selected(self, marker_id: int):
         self._current_id = marker_id
-        self.setText(f"Marker {marker_id}  ▾")
+        self.setText("None  ▾" if marker_id == 0 else f"Marker {marker_id}  ▾")
         self.marker_selected.emit(marker_id)
 
     def _on_panel_closed(self):

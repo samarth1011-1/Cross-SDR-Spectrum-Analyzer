@@ -86,20 +86,25 @@ python run.py
 ```
 
 Select the device type, center frequency, span, sample rate, and gain, then press
-**Run**. Parameter changes while running trigger a controlled device restart.
+**Start acquisition**. Parameter changes while running trigger a controlled
+device restart. The HackRF One profile is capped at 20 MS/s and 20 MHz. The
+Ettus USRP X301 profile uses the X300-series ceilings of 200 MS/s and 160 MHz;
+the widest mode requires a 160 MHz daughterboard and 10 GigE or PCIe.
 Trace holds and averaging reset when the stream is started or reconfigured.
 
 ### Test without an SDR
 
 1. Start the application with `python run.py`.
-2. Select **SIMULATOR** (it is selected by default) and press **Run**.
+2. Select **Simulator** (it is selected by default) and press **Start acquisition**.
 3. Two phase-continuous carriers with noise will appear around the selected
    center frequency. Their levels change continuously.
 4. Enable **Max Hold**, **Min Hold**, and **Average** individually or together.
-   The red and blue envelopes should separate while the yellow average settles.
-5. Click the spectrum to place M1/M2/M3, enable delta mode, inspect the
-   waterfall, change center/span/sample rate, and export a CSV or screenshot.
-6. Press **Stop**. No SoapySDR installation or device driver is required for
+   The violet and blue envelopes should separate while the yellow average settles.
+5. Confirm **None** prevents click placement, then choose Marker 1/2/3 and each
+   **Trace Marker** option, enable delta mode,
+   inspect the waterfall, change center/span/sample rate, and export a CSV or
+   screenshot. The small blinking red triangle should follow the global peak.
+6. Press **Stop acquisition**. No SoapySDR installation or device driver is required for
    simulator mode; only NumPy, PyQt6, and pyqtgraph are needed.
 
 This mode generates complex IQ blocks and sends them through the same
