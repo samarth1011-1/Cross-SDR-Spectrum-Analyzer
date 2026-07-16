@@ -92,6 +92,7 @@ class SpectrumFrame:
     rbw: float
     frame_count: int
     device_name: str = ""
+    carriers: list = field(default_factory=list)
 
 
 # Legacy file-capture models are retained for old recordings and scripts.

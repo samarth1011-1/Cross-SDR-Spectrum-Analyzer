@@ -7,8 +7,10 @@ Owner: Developer B (Frontend/GUI)
 
 import numpy as np
 import pyqtgraph as pg
+from pyqtgraph import FillBetweenItem
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
+
 
 # ----------------------------------------------------------------------------
 # Theme constants
@@ -66,7 +68,8 @@ class SpectrumWidget(QWidget):
         self._init_traces()
         self._init_auto_peak_marker()
         self._init_markers()
-
+        self._carrier_show = True
+        self._last_frame = None
         self.show_clear_write = True
         self.show_max_hold    = False
         self.show_min_hold    = False
@@ -114,6 +117,13 @@ class SpectrumWidget(QWidget):
         self.curve_max_hold.setVisible(False)
         self.curve_min_hold.setVisible(False)
         self.curve_average.setVisible(False)
+        # --------------------------------------------------
+        # Carrier overlay
+        # --------------------------------------------------
+
+        self._carrier_fill_items = []
+
+        self._carrier_show = True
 
     def _init_auto_peak_marker(self):
         """Create the red, non-interactive indicator for the selected trace peak."""
@@ -482,10 +492,69 @@ class SpectrumWidget(QWidget):
             self.show_average = average
             self.curve_average.setVisible(average)
 
+    def _clear_carriers(self):
+
+        for item in self._carrier_fill_items:
+            self.plot_widget.removeItem(item)
+
+        self._carrier_fill_items.clear()
+    
+    def _draw_carriers(self, frame):
+
+        if not self._carrier_show:
+            return
+
+        self._clear_carriers()
+
+        if not frame.carriers:
+            return
+
+        freq = frame.frequency
+        amp = frame.amplitude
+
+        # Get current visible Y-axis range
+        y_min, y_max = self.plot_widget.getViewBox().viewRange()[1]
+
+        # Fill should span the entire visible plot
+        upper = np.full_like(amp, y_max)
+        lower = np.full_like(amp, y_min)
+
+        for carrier in frame.carriers:
+
+            left = carrier.left_bin
+            right = carrier.right_bin
+
+            x = freq[left:right + 1]
+
+            top = upper[left:right + 1]
+            bottom = lower[left:right + 1]
+
+            upper_curve = pg.PlotCurveItem(
+                x,
+                top,
+                pen=None,
+            )
+
+            lower_curve = pg.PlotCurveItem(
+                x,
+                bottom,
+                pen=None,
+            )
+
+            fill = FillBetweenItem(
+                upper_curve,
+                lower_curve,
+                brush=pg.mkBrush(95, 215, 145, 110)
+            )
+
+            self.plot_widget.addItem(fill)
+
+            self._carrier_fill_items.append(fill)
     # ------------------------------------------------------------------
     # Frame update (called per FFT frame from gui.py)
     # ------------------------------------------------------------------
     def update_frame(self, frame):
+        self._last_frame = frame
         freq = frame.frequency
         amp  = frame.amplitude
         self._last_frequency = freq
@@ -523,9 +592,10 @@ class SpectrumWidget(QWidget):
             self.curve_min_hold.setData(freq, frame.min_hold)
         if self.show_average and frame.average is not None:
             self.curve_average.setData(freq, frame.average)
-
+        self._draw_carriers(frame)
         if self._markers:
             self._emit_state()
+        
 
     # ------------------------------------------------------------------
     # Zoom
@@ -541,3 +611,14 @@ class SpectrumWidget(QWidget):
 
     def set_reference_level(self, ref_dbm: float, span_db: float = 120):
         self.plot_widget.setYRange(ref_dbm - span_db, ref_dbm)
+
+    def set_carrier_visibility(self, visible):
+
+        self._carrier_show = visible
+
+        if not visible:
+            self._clear_carriers()
+            return
+
+        if hasattr(self, "_last_frame") and self._last_frame is not None:
+            self._draw_carriers(self._last_frame)

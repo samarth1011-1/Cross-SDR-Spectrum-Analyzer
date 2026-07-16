@@ -573,6 +573,9 @@ class MainWindow(QMainWindow):
         self.btn_max_hold = QPushButton("Max Hold")
         self.btn_min_hold = QPushButton("Min Hold")
         self.btn_average = QPushButton("Average")
+        self.btn_carriers = QPushButton("Carrier")
+        self.btn_carriers.setCheckable(True)
+        self.btn_carriers.setChecked(True)
         for btn in (
             self.btn_clear_write,
             self.btn_max_hold,
@@ -584,8 +587,11 @@ class MainWindow(QMainWindow):
         self.btn_clear_write.setChecked(True)
         trace_grid.addWidget(self.btn_clear_write, 0, 0)
         trace_grid.addWidget(self.btn_max_hold, 0, 1)
+
         trace_grid.addWidget(self.btn_min_hold, 1, 0)
         trace_grid.addWidget(self.btn_average, 1, 1)
+
+        trace_grid.addWidget(self.btn_carriers, 2, 0, 1, 2)
         traces_layout.addWidget(grp_trace_controls)
 
         grp_traces = QGroupBox("Active Traces")
@@ -756,6 +762,9 @@ class MainWindow(QMainWindow):
         self.btn_max_hold.clicked.connect(self._update_trace_modes)
         self.btn_min_hold.clicked.connect(self._update_trace_modes)
         self.btn_average.clicked.connect(self._update_trace_modes)
+        self.btn_carriers.toggled.connect(
+                self._toggle_carrier_detection
+            )
         
         self.btn_screenshot.clicked.connect(lambda: self.recorder.take_screenshot())
         self.btn_export_csv.clicked.connect(lambda: self.recorder.export_csv(self._last_frame))
@@ -779,6 +788,7 @@ class MainWindow(QMainWindow):
          self._reference_level_changed
         )
         self._apply_device_profile()
+
     def _update_trace_modes(self):
         cw = self.btn_clear_write.isChecked()
         mh = self.btn_max_hold.isChecked()
@@ -800,6 +810,15 @@ class MainWindow(QMainWindow):
                        f"Average: {'ON' if av else 'OFF'}")
         self.lbl_trace_status.setText(status_text)
 
+    def _toggle_carrier_detection(self, checked):
+
+        self.spectrum_widget.set_carrier_visibility(checked)
+
+        self.status_bar.showMessage(
+            f"Carrier Detection {'Enabled' if checked else 'Disabled'}",
+            2500
+        )
+        
     def _on_trace_marker_changed(self, _index=None):
         trace_name = self.trace_marker_combo.currentData()
         trace_button = {
@@ -1027,11 +1046,21 @@ class MainWindow(QMainWindow):
         self.lbl_meas_chan_pwr.setText(f"{frame.channel_power:.2f} dBFS")
         self.lbl_fft_size.setText(f"FFT Size: {frame.fft_size}")
         self.lbl_rbw.setText(f"RBW: {frame.rbw/1e3:.3f} kHz")
-        now = time.monotonic()
+        now = time.monotonic()  
         if self._last_frame_time is not None and now > self._last_frame_time:
             self.lbl_fps.setText(f"FPS: {1.0/(now-self._last_frame_time):.1f}")
         self._last_frame_time = now
-
+        #temp
+        print(len(frame.carriers))
+        if frame.carriers:
+            print("=" * 50)
+            for i, c in enumerate(frame.carriers, start=1):
+                print(
+                    f"Carrier {i}: "
+                    f"Left={c.left_bin}, "
+                    f"Right={c.right_bin}, "
+                    f"Width={c.right_bin - c.left_bin} bins"
+                )
     # -----------------------------------------------------------------------
     # Marker & Delta Logic
     # -----------------------------------------------------------------------
