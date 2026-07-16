@@ -2,14 +2,19 @@
   "devices": {
     "HACKRF": {
       "default": {
-        "frequency_axis_offset_hz": -22000.0,
+        "ppm_offset": 22.5,
         "power_offset_db": null
       },
-      "serials": {}
+      "serials": {
+        "your_serial_here": {                                     
+          "ppm_offset": 23.1,
+          "power_offset_db": null
+        }
+      }
     },
     "USRP": {
       "default": {
-        "frequency_axis_offset_hz": 0.0,
+        "ppm_offset": 0.0,
         "power_offset_db": null
       },
       "serials": {}

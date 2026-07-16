@@ -13,6 +13,7 @@ from collections.abc import Callable
 import numpy as np
 
 from .controller import AnalyzerPipeline
+# from .calibration import load_device_calibration, interpolated_offset_hz // NON-LINEAR SCALE.
 from .calibration import load_device_calibration
 from .models import AcquisitionConfig, DeviceInfo
 
@@ -332,8 +333,22 @@ class HackRFAcquisition:
             calibration = load_device_calibration(
                 "HACKRF", matches[0].get("serial", "")
             )
+
+
             axis_offset = float(calibration.get("frequency_axis_offset_hz") or 0.0)
             calibrated_freq = driver_freq + axis_offset
+
+            # do this changes when you know the offset scales roughly double. 
+            # ppm_offset = float(calibration.get("ppm_offset") or 0.0)
+            # calibrated_freq = driver_freq * (1.0 - ppm_offset * 1e-6)
+
+
+            # DO THIS CHANGE WHEN IT DOESNT SCALE LINEARLY
+            # freq_table = calibration.get("frequency_offset_table") or []
+            # axis_offset = interpolated_offset_hz(driver_freq, freq_table)
+            # calibrated_freq = driver_freq - axis_offset  # confirm sign against your measured table
+
+            
             if abs(actual_rate - self.config.sample_rate) / self.config.sample_rate > 0.01:
                 raise AcquisitionError(
                     f"HackRF selected {actual_rate/1e6:.3f} Msps instead of the requested "
