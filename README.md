@@ -10,9 +10,10 @@ The application continuously receives complex IQ samples from the selected
 source, calculates an FFT, and displays a live spectrum and waterfall. Existing
 analysis features include clear/write, max hold, min hold, averaging, peak
 measurements, markers, delta markers, occupied bandwidth, and CSV export.
-Six normal/delta markers are available. Stateful carrier detection highlights
-the active carrier on the spectrum and records rising/falling burst edges in a
-dedicated Carrier Activity window.
+A small, slow-blinking red marker automatically follows the strongest live FFT
+bin. Six normal/delta markers can be attached to CW, Max hold, Min hold, or
+Average, with one trace selected for all markers at a time. Marker selection
+defaults to **None** so spectrum clicks cannot create markers accidentally.
 
 > **Current amplitude unit:** dBFS. Absolute dBm requires RF calibration for the
 > specific SDR, frequency, gain, sample rate, and signal path. See
@@ -52,14 +53,15 @@ flowchart LR
 In simple terms:
 
 1. `backend/acquisition.py` finds the selected SDR through SoapySDR and opens a
-   continuous receive stream. Simulator mode creates two changing carriers and
-   noise locally.
+   continuous receive stream. Simulator mode creates two nearby QPSK/OFDM-like
+   occupied carriers with noise locally.
 2. Acquisition runs on a background thread so the GUI stays responsive.
 3. `backend/dsp.py` applies a Hann window and computes a 4096-point FFT. It
    converts FFT-bin magnitudes into dBFS and builds the frequency axis.
 4. `backend/trace.py` updates the live, max-hold, min-hold, and average arrays.
 5. `backend/measurements.py` and `backend/peak.py` calculate the measurement
-   values. Peaks are used for analytics but are not drawn as colored triangles.
+   values. The renderer places the red auto-peak indicator on the strongest live
+   FFT bin.
 6. `backend/controller.py` packages everything into one `SpectrumFrame`.
 7. Qt sends that frame to the spectrum renderer and waterfall in the frontend.
 
@@ -85,12 +87,12 @@ Then:
 
 1. Leave **SIMULATOR** selected.
 2. Press **Run**.
-3. Two carriers and a noise floor should appear.
+3. Two nearby digital-carrier bands and a noise floor should appear.
 4. Enable **Max Hold**, **Min Hold**, and **Average**. The traces should separate
    because the simulated carrier levels change over time.
-5. Click the waveform to place a marker.
-6. Enable **Delta** and drag the delta marker. It will remain snapped to the
-   current waveform instead of moving freely.
+5. Choose a **Trace Marker** option, then click the spectrum to place a marker.
+6. Enable **Delta** and drag the delta marker. Both markers remain snapped to the
+   selected trace instead of moving freely.
 7. Check the waterfall, measurements, screenshot, and CSV export.
 8. Change center frequency, span, sample rate, or gain. The source is restarted
    with the new settings and trace history begins again.
@@ -183,20 +185,33 @@ Run `uhd_images_downloader` during initial setup. USB USRPs require the correct
 Windows USB driver. Network USRPs must be reachable on the configured network
 interface and permitted by the local firewall.
 
-Select **USRP** in the application and use a sample rate supported by that
-device, then press **Run**. The analyzer discovers and opens the USRP only for
-that selection and uses receive channel 0. To return to HackRF, select
-**HackRF** and press **Run** again; the previous stream is fully closed before
-the selected device is opened.
+Select **Ettus USRP X301** in the application to load the X300-series profile:
+up to 200 MS/s and a 160 MHz span. Ettus documents the product as X300 (the
+Kintex-7 325T model); this UI uses the requested X301 label for that profile.
+The full 160 MHz span requires a compatible 160 MHz daughterboard plus 10 GigE
+or PCIe. A 1 GigE link is limited to substantially lower streaming rates. The
+analyzer discovers and opens the USRP only when acquisition starts and uses RX
+channel 0. Switching back to **HackRF One** restores its 20 MS/s and 20 MHz
+limits before the next stream opens.
 
 ## Using the interface
+
+The header is reserved for device selection and acquisition state. Tuning and
+receiver configuration live in **Analyzer Setup** on the left. The right-side
+**Analysis** dock separates the remaining controls into **Measure**, **Traces**,
+and **Markers** tabs so the spectrum and waterfall remain the visual focus. The
+three tabs always share the full Analysis width equally. Edge-arrow handles hide
+or restore either side dock; with both docks hidden, the central spectrum and
+waterfall expand across the complete workspace. The interface uses a true black
+background with high-contrast near-black panels, gray borders, white text, and
+cyan interaction accents so controls and plot annotations remain visible.
 
 ### Device and receiver controls
 
 | Control | Meaning |
 |---|---|
-| Device | Select Simulator, HackRF, or USRP |
-| Run / Stop | Open or close the continuous receive stream |
+| Device | Select Simulator, HackRF One, or the Ettus USRP X301 profile |
+| Start / Stop acquisition | Open or close the continuous receive stream |
 | Center | RF center frequency in Hz, kHz, MHz, or GHz |
 | Span | Width of spectrum displayed around the center |
 | SR | Hardware sample rate in mega-samples per second |
@@ -206,47 +221,50 @@ The displayed span cannot exceed the sample rate. If a smaller span is selected,
 the backend crops the FFT bins around the center frequency. Changing a receiver
 setting while running performs a controlled stream restart.
 
-Different SDRs have different valid frequency, sample-rate, and gain ranges. A
-device can reject an unsupported setting. The status bar displays the resulting
-error rather than silently continuing.
+Device selection updates both the sample-rate choices and the span limit. The
+HackRF profile restores 20 MS/s and 20 MHz. The X301 profile exposes 200 MS/s
+and 160 MHz subject to its daughterboard and host-link requirements. A device
+can still reject a setting unsupported by its exact hardware configuration; the
+status bar displays that error rather than silently continuing.
 
 ### Traces
 
 | Trace | Color | Behavior |
 |---|---|---|
 | Clear Write | Cyan | Most recent FFT frame |
-| Max Hold | Red | Highest value reached by every frequency bin |
+| Max Hold | Violet | Highest value reached by every frequency bin |
 | Min Hold | Blue | Lowest valid displayed-sweep value reached by every frequency bin since Min Hold was enabled |
-| Average | Yellow | Running average of every frequency bin |
+| Average | Yellow | Running linear-power average of every frequency bin, displayed in dBFS |
 
 Max-hold and average history start with acquisition. Min hold starts fresh when
 it is enabled. Trace history resets after the stream is reconfigured or
 restarted. Numerical FFT-floor values are excluded from min hold so a single
 underflow bin cannot pin the trace to -140 dBFS. Multiple traces can be displayed
-at the same time.
+at the same time. Average uses the same power-detector path for Simulator,
+HackRF, and USRP input, so noise-like digital modulation remains visible instead
+of being suppressed by direct arithmetic averaging of dB values. Hardware modes
+show only carriers physically present at their RF inputs; no simulator signal is
+mixed into live SDR samples.
 
 ### Markers
 
-- Select marker M1 through M6 and click the spectrum to place it.
+- **None** is selected initially. While it is active, spectrum clicks, context
+  placement, and Peak Search cannot create or move a normal marker.
+- Select **CW**, **Max hold**, **Min hold**, or **Average** in **Trace Marker**.
+  This one selection applies to all six normal markers and their delta markers.
+- Select marker M1 through M6 and click the spectrum to place it. Changing
+  **Trace Marker** reattaches all existing markers at their current frequencies.
 - Edit a marker's **Freq** cell in the marker table to move it precisely. A plain
   number is interpreted as MHz; explicit `Hz`, `kHz`, `MHz`, and `GHz` suffixes
   are accepted. The marker snaps to the nearest displayed FFT bin.
-- A normal marker snaps to the nearest FFT bin and follows that bin's live
-  amplitude as new frames arrive.
+- A normal marker snaps to the nearest FFT bin and follows that bin's value on
+  the selected trace as new frames arrive.
 - Delta mode creates a second marker relative to the selected normal marker.
-- The delta marker also snaps to the existing live waveform while being dragged.
+- The delta marker also snaps to the selected trace while being dragged.
 - Delta frequency and amplitude are shown relative to the parent marker.
 - **Clear All** removes all normal and delta markers.
-- Peak detection is still used for measurements and Peak Search, but automatic
-  colored peak triangles are intentionally not displayed.
-
-### Carrier activity
-
-The detector uses peak level above the median noise floor, two-frame
-confirmation, and hysteresis to avoid rapid on/off chatter. An active carrier's
-band is shaded on the main spectrum. Rising and falling states are labeled on
-that overlay. Open **Carrier Activity** for a time plot where green and red
-symbols mark temporal rising and falling burst edges.
+- A small red triangle automatically tracks the global live-spectrum peak and
+  blinks every 700 ms. Red is reserved for this automatic indicator.
 
 ### Waterfall
 
@@ -291,7 +309,6 @@ The right-side measurement panel currently reports:
 | Noise Floor | Median amplitude of all displayed FFT bins |
 | Occupied Bandwidth | Frequency interval containing the middle 99% of displayed spectral power: 0.5% to 99.5% cumulative power |
 | Channel Power | Sum of linear power from every displayed FFT bin, converted back to dBFS |
-| Carrier BW | Contiguous region around the strongest peak that remains at least 6 dB above the median noise floor |
 
 Important interpretation notes:
 
@@ -301,9 +318,6 @@ Important interpretation notes:
   produce a large occupied-bandwidth value.
 - Channel power currently integrates the complete displayed span; there is no
   separately selected channel boundary.
-- The GUI label `Carrier BW (Sub-Noise)` is historical. The implemented
-  calculation is actually the strongest contiguous region above noise + 6 dB.
-
 ## Amplitude: dBFS and dBm
 
 The SDR supplies normalized digital IQ values. Therefore, the backend can
@@ -356,7 +370,6 @@ freqanalyzer/
 |-- backend/
 |   |-- acquisition.py        SoapySDR streaming and IQ simulator
 |   |-- controller.py         IQ-to-SpectrumFrame processing pipeline
-|   |-- carrier.py            Carrier state and burst-edge detector
 |   |-- calibration.py        Calibration file loader
 |   |-- dsp.py                Window, FFT, frequency axis, and dBFS
 |   |-- trace.py              Live, max/min hold, and average traces
@@ -373,11 +386,12 @@ freqanalyzer/
 |   |-- waterfall.py          Waterfall history display
 |   |-- freq_control.py       Frequency/unit input widget
 |   |-- marker_dropdown.py    M1 through M6 selector
-|   |-- carrier_window.py     Carrier activity history and edge window
 |   `-- recorder.py           Screenshot and CSV export
 `-- tests/
+    |-- test_acquisition.py    Mock SDR and live simulator tests
+    |-- test_gui.py            Device profiles and tabbed UI tests
     |-- test_pipeline.py       DSP, tone, span, hold, and average tests
-    `-- test_acquisition.py    Mock SDR and live simulator tests
+    `-- test_renderer.py       Auto-peak and multi-trace marker tests
 ```
 
 `backend/main.py` is a discovery diagnostic, not the graphical application.
@@ -398,6 +412,7 @@ The tests verify:
 - display-span cropping and finite measurements
 - mocked SoapySDR stream delivery and shutdown
 - isolated HackRF/USRP selection and mocked USRP receive configuration
+- X300-series/HackRF profile limits and marker-disabled UI state
 - real-time simulator delivery through the normal analyzer pipeline
 
 Run a syntax check with:

@@ -93,8 +93,18 @@ class FrequencyControl(QWidget):
         return self._current_hz
 
     def set_value_hz(self, hz_value: float):
-        self._current_hz = hz_value
-        self._set_spin_value_from_hz(hz_value)
+        self._current_hz = max(self._min_hz, min(self._max_hz, hz_value))
+        self._set_spin_value_from_hz(self._current_hz)
+
+    def set_limits_hz(self, minimum_hz: float, maximum_hz: float):
+        """Update the valid range and clamp the current value without emitting."""
+        if minimum_hz > maximum_hz:
+            raise ValueError("minimum_hz must not exceed maximum_hz")
+        self._min_hz = float(minimum_hz)
+        self._max_hz = float(maximum_hz)
+        self._current_hz = max(self._min_hz, min(self._max_hz, self._current_hz))
+        self._apply_range_for_current_unit()
+        self._set_spin_value_from_hz(self._current_hz)
 
     def set_suffix_visible_unit(self, unit: str):
         """Programmatically switch the displayed unit (e.g. from a preset)."""

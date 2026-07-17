@@ -13,6 +13,7 @@ from collections.abc import Callable
 import numpy as np
 
 from .controller import AnalyzerPipeline
+# from .calibration import load_device_calibration, interpolated_offset_hz // NON-LINEAR SCALE.
 from .calibration import load_device_calibration
 from .models import AcquisitionConfig, DeviceInfo
 
@@ -25,6 +26,11 @@ HACKRF_MIN_FREQ = 1e6
 HACKRF_MAX_FREQ = 6e9
 HACKRF_MIN_RATE = 2e6
 HACKRF_MAX_RATE = 20e6
+
+# X300-series motherboard ceiling. A 160 MHz usable span requires a compatible
+# wide-band daughterboard and a 10 GigE or PCIe host connection.
+USRP_X3X0_MAX_RATE = 200e6
+USRP_X3X0_MAX_SPAN = 160e6
 
 # Front-end amp. Keep OFF for signal-generator work: +14 dB into a HackRF that is
 # already fed a strong CW tone will compress the ADC and can damage the LNA.
@@ -68,10 +74,10 @@ def create_acquisition(config: AcquisitionConfig):
 
 
 # ---------------------------------------------------------------------------
-# Simulator (unchanged)
+# Simulator
 # ---------------------------------------------------------------------------
 class SyntheticAcquisition:
-    """Phase-continuous IQ generator for testing the complete live pipeline."""
+    """Nearby QPSK/OFDM-like carriers for testing the complete live pipeline."""
 
     def __init__(self, config: AcquisitionConfig, frame_rate: float = 30.0):
         self.config = config
@@ -85,6 +91,41 @@ class SyntheticAcquisition:
     def reset_min_hold(self):
         self._reset_min_hold_event.set()
 
+    @staticmethod
+    def _digital_carrier_block(
+        rng,
+        fft_size: int,
+        sample_rate: float,
+        center_offset: float,
+        bandwidth: float,
+        target_rms: float,
+    ) -> np.ndarray:
+        """Synthesize one raised-edge, QPSK-loaded multicarrier symbol."""
+        bin_count = max(
+            8,
+            min(fft_size - 1, int(round(bandwidth * fft_size / sample_rate))),
+        )
+        center_bin = int(round(center_offset * fft_size / sample_rate))
+        relative_bins = np.arange(bin_count) - bin_count // 2
+        active_bins = (center_bin + relative_bins) % fft_size
+
+        qpsk_indices = rng.integers(0, 4, size=bin_count)
+        qpsk = np.exp(1j * (np.pi / 4.0 + qpsk_indices * np.pi / 2.0))
+
+        # A short raised-cosine transition gives the averaged spectrum the
+        # shoulders of a bandwidth-limited digital waveform.
+        weights = np.ones(bin_count, dtype=np.float64)
+        edge_bins = max(2, bin_count // 12)
+        edge = np.sin(np.linspace(0.15, np.pi / 2.0, edge_bins)) ** 2
+        weights[:edge_bins] = edge
+        weights[-edge_bins:] = edge[::-1]
+
+        spectrum = np.zeros(fft_size, dtype=np.complex128)
+        spectrum[active_bins] = qpsk * weights
+        samples = np.fft.ifft(spectrum) * fft_size
+        measured_rms = float(np.sqrt(np.mean(np.abs(samples) ** 2)))
+        return samples * (target_rms / max(measured_rms, 1e-12))
+
     def run(
         self,
         frame_callback: Callable[[object], None],
@@ -94,12 +135,13 @@ class SyntheticAcquisition:
             status_callback("Connected: Built-in IQ Simulator")
         pipeline = AnalyzerPipeline(self.config, "Built-in IQ Simulator")
         rng = np.random.default_rng(20260711)
-        sample_index = 0
         started = time.monotonic()
         deadline = started
         visible_span = min(self.config.span, self.config.sample_rate)
-        offset_1 = 0.17 * visible_span
-        offset_2 = -0.28 * visible_span
+        primary_offset = -0.045 * visible_span
+        secondary_offset = 0.055 * visible_span
+        primary_bandwidth = 0.075 * visible_span
+        secondary_bandwidth = 0.030 * visible_span
 
         try:
             while not self._stop_event.is_set():
@@ -107,22 +149,32 @@ class SyntheticAcquisition:
                     pipeline.traces.reset_min_hold()
                     self._reset_min_hold_event.clear()
                 elapsed = time.monotonic() - started
-                indices = sample_index + np.arange(self.config.fft_size, dtype=np.float64)
-                amplitude_1 = 0.30 + 0.16 * np.sin(2.0 * np.pi * elapsed / 3.0)
-                amplitude_2 = 0.16 if int(elapsed * 2.0) % 2 == 0 else 0.045
-                tone_1 = amplitude_1 * np.exp(
-                    2j * np.pi * offset_1 * indices / self.config.sample_rate
+                primary = self._digital_carrier_block(
+                    rng,
+                    self.config.fft_size,
+                    self.config.sample_rate,
+                    primary_offset,
+                    primary_bandwidth,
+                    0.13 * (1.0 + 0.08 * np.sin(2.0 * np.pi * elapsed / 3.0)),
                 )
-                tone_2 = amplitude_2 * np.exp(
-                    2j * np.pi * offset_2 * indices / self.config.sample_rate
+                secondary = self._digital_carrier_block(
+                    rng,
+                    self.config.fft_size,
+                    self.config.sample_rate,
+                    secondary_offset,
+                    secondary_bandwidth,
+                    0.07 * (1.0 + 0.15 * np.sin(2.0 * np.pi * elapsed / 2.2)),
                 )
-                noise = 0.006 * (
+                noise = 0.0035 * (
                     rng.standard_normal(self.config.fft_size)
                     + 1j * rng.standard_normal(self.config.fft_size)
                 )
-                samples = (tone_1 + tone_2 + noise).astype(np.complex64)
+                samples = primary + secondary + noise
+                peak = float(np.max(np.abs(samples)))
+                if peak > 0.92:
+                    samples *= 0.92 / peak
+                samples = samples.astype(np.complex64)
                 frame_callback(pipeline.process(samples))
-                sample_index += self.config.fft_size
 
                 deadline += 1.0 / self.frame_rate
                 remaining = deadline - time.monotonic()
@@ -281,8 +333,22 @@ class HackRFAcquisition:
             calibration = load_device_calibration(
                 "HACKRF", matches[0].get("serial", "")
             )
+
+
             axis_offset = float(calibration.get("frequency_axis_offset_hz") or 0.0)
             calibrated_freq = driver_freq + axis_offset
+
+            # do this changes when you know the offset scales roughly double. 
+            # ppm_offset = float(calibration.get("ppm_offset") or 0.0)
+            # calibrated_freq = driver_freq * (1.0 - ppm_offset * 1e-6)
+
+
+            # DO THIS CHANGE WHEN IT DOESNT SCALE LINEARLY
+            # freq_table = calibration.get("frequency_offset_table") or []
+            # axis_offset = interpolated_offset_hz(driver_freq, freq_table)
+            # calibrated_freq = driver_freq - axis_offset  # confirm sign against your measured table
+
+            
             if abs(actual_rate - self.config.sample_rate) / self.config.sample_rate > 0.01:
                 raise AcquisitionError(
                     f"HackRF selected {actual_rate/1e6:.3f} Msps instead of the requested "
@@ -448,12 +514,28 @@ class USRPAcquisition:
     """Configure and continuously stream one USRP without touching HackRF state."""
 
     def __init__(self, config: AcquisitionConfig):
-        self.config = config
+        self.config = self._validate(config)
         self._stop_event = threading.Event()
         self._reset_min_hold_event = threading.Event()
         self._soapy = None
         self._device = None
         self._stream = None
+
+    @staticmethod
+    def _validate(config: AcquisitionConfig) -> AcquisitionConfig:
+        if config.sample_rate <= 0 or config.sample_rate > USRP_X3X0_MAX_RATE:
+            raise AcquisitionError(
+                f"USRP sample rate must be above 0 and no more than "
+                f"{USRP_X3X0_MAX_RATE/1e6:.0f} MS/s for the X300-series profile."
+            )
+        if config.span <= 0 or config.span > USRP_X3X0_MAX_SPAN:
+            raise AcquisitionError(
+                f"USRP span must be above 0 and no more than "
+                f"{USRP_X3X0_MAX_SPAN/1e6:.0f} MHz for the X300-series profile."
+            )
+        if config.span > config.sample_rate:
+            raise AcquisitionError("USRP span cannot exceed its sample rate.")
+        return config
 
     def stop(self):
         self._stop_event.set()

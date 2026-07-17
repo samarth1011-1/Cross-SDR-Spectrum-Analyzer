@@ -26,3 +26,20 @@ def load_device_calibration(device_type: str, serial: str = "") -> dict[str, flo
     except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, AttributeError):
         return result
     return result
+
+# IF OFFSET DOES NOT SCALE LINEARLY, USE THIS
+# REMOVE IF IT SCALES LINEARLY
+def interpolated_offset_hz(freq_hz: float, table: list[dict]) -> float:
+    """Linearly interpolate frequency offset from a sorted calibration table."""
+    if not table:
+        return 0.0
+    if freq_hz <= table[0]["freq_hz"]:
+        return table[0]["offset_hz"]
+    if freq_hz >= table[-1]["freq_hz"]:
+        return table[-1]["offset_hz"]
+    for i in range(len(table) - 1):
+        lo, hi = table[i], table[i + 1]
+        if lo["freq_hz"] <= freq_hz <= hi["freq_hz"]:
+            frac = (freq_hz - lo["freq_hz"]) / (hi["freq_hz"] - lo["freq_hz"])
+            return lo["offset_hz"] + frac * (hi["offset_hz"] - lo["offset_hz"])
+    return 0.0

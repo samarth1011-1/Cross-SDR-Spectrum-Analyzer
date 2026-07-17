@@ -69,19 +69,6 @@ class MeasurementData:
     noise_floor: float
     occupied_bandwidth: float
     channel_power: float
-    carrier_bandwidth: float
-
-
-@dataclass
-class CarrierDetection:
-    detected: bool
-    event: str
-    peak_frequency: float
-    peak_level: float
-    noise_floor: float
-    margin_db: float
-    lower_frequency: float
-    upper_frequency: float
 
 
 @dataclass
@@ -98,7 +85,6 @@ class SpectrumFrame:
     timestamp: float
     noise_floor: float
     channel_power: float
-    carrier_bandwidth: float
     center_frequency: float
     sample_rate: float
     span: float
@@ -106,7 +92,6 @@ class SpectrumFrame:
     rbw: float
     frame_count: int
     device_name: str = ""
-    carrier: CarrierDetection | None = None
 
 
 # Legacy file-capture models are retained for old recordings and scripts.
