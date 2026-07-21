@@ -13,7 +13,7 @@ from collections.abc import Callable
 import numpy as np
 
 from .controller import AnalyzerPipeline
-# from .calibration import load_device_calibration, interpolated_offset_hz // NON-LINEAR SCALE.
+# from .calibration import load_device_calibration, interpolated_offset_hz  // table path, unused: error is linear.
 from .calibration import load_device_calibration
 from .models import AcquisitionConfig, DeviceInfo
 
@@ -334,21 +334,14 @@ class HackRFAcquisition:
                 "HACKRF", matches[0].get("serial", "")
             )
 
+            # Two-term display-axis correction: constant offset + proportional (ppm)
+            # drift. Sign convention (calibration doc): offset_hz = observed - reference,
+            # and a POSITIVE error means the project displays too high, so we SUBTRACT.
+            fixed_error_hz = float(calibration.get("frequency_fixed_error_hz") or 0.0)
+            ppm_error = float(calibration.get("frequency_ppm_error") or 0.0)
+            frequency_error_hz = fixed_error_hz + driver_freq * ppm_error * 1e-6
+            calibrated_freq = driver_freq - frequency_error_hz
 
-            axis_offset = float(calibration.get("frequency_axis_offset_hz") or 0.0)
-            calibrated_freq = driver_freq + axis_offset
-
-            # do this changes when you know the offset scales roughly double. 
-            # ppm_offset = float(calibration.get("ppm_offset") or 0.0)
-            # calibrated_freq = driver_freq * (1.0 - ppm_offset * 1e-6)
-
-
-            # DO THIS CHANGE WHEN IT DOESNT SCALE LINEARLY
-            # freq_table = calibration.get("frequency_offset_table") or []
-            # axis_offset = interpolated_offset_hz(driver_freq, freq_table)
-            # calibrated_freq = driver_freq - axis_offset  # confirm sign against your measured table
-
-            
             if abs(actual_rate - self.config.sample_rate) / self.config.sample_rate > 0.01:
                 raise AcquisitionError(
                     f"HackRF selected {actual_rate/1e6:.3f} Msps instead of the requested "
@@ -398,7 +391,9 @@ class HackRFAcquisition:
             details={
                 **matches[0],
                 "driver_frequency_hz": str(driver_freq),
-                "frequency_axis_offset_hz": str(axis_offset),
+                "frequency_fixed_error_hz": str(fixed_error_hz),
+                "frequency_ppm_error": str(ppm_error),
+                "frequency_correction_hz": str(frequency_error_hz),
                 "display_center_frequency_hz": str(calibrated_freq),
             },
         )
