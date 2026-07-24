@@ -2,19 +2,22 @@
   "devices": {
     "HACKRF": {
       "default": {
-        "ppm_offset": 22.5,
+        "frequency_fixed_error_hz": 0.0,
+        "frequency_ppm_error": 0.0,
         "power_offset_db": null
       },
       "serials": {
-        "your_serial_here": {                                     
-          "ppm_offset": 23.1,
+        "000000000000000066a062dc276a579f": {
+          "frequency_fixed_error_hz": -297.7,
+          "frequency_ppm_error": 8.9304,
           "power_offset_db": null
         }
       }
     },
     "USRP": {
       "default": {
-        "ppm_offset": 0.0,
+        "frequency_fixed_error_hz": 0.0,
+        "frequency_ppm_error": 0.0,
         "power_offset_db": null
       },
       "serials": {}
